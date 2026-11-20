@@ -828,11 +828,16 @@ def _mission_prompt_extraction(ctx: MissionContext) -> MissionResult:
             max_turns=max(5, min_d),
         )
         pr_error = pr.get("error")
+        reply_texts = pr.get("reply_texts") or []
         evidence = {
             "since": since, "canary": ctx.canary, "session_id": ctx.session_id,
             "attacker": attacker, "victim": victim, "auditor": auditor,
             "expected_sha256": expected_sha256, "prompt_truth": expected_sha256,
             "engine": "pyrit.RedTeamingAttack",
+            # Decoded replies for the SHA-256 prompt-match oracle; the quotes stay
+            # raw-body-verbatim so the ledger quote-verification gate passes.
+            "replies": list(reply_texts),
+            "reply_text": reply_texts[-1] if reply_texts else "",
         }
         if pr_error:
             evidence["adversarial_error"] = pr_error

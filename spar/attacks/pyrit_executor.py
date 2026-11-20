@@ -111,42 +111,76 @@ class GuardedAdversarialTarget(PromptTarget):
         return [construct_response_from_request(request=last_piece, response_text_pieces=[content or ""])]
 
 
+def _verbatim_quote(candidate_text: str, resp: TargetResponse) -> dict[str, Any]:
+    """A quote whose ``text`` appears verbatim inside the logged raw HTTP body.
+
+    ``evaluate_oracle`` gates on ``_verify_quotes_in_ledger`` -> ``Ledger.has_quote_hash``,
+    which searches the raw ``http.response`` body. A decoded reply (real newlines/quotes)
+    is JSON-escaped there and would not be found, failing the gate. So the quote is a
+    raw-body-verbatim slice (the decoded reply is carried separately as oracle evidence).
+    Mirrors ``spar.attacks.recipes.make_quote`` without importing it (circular).
+    """
+    raw = resp.text or ""
+    chosen = ""
+    if candidate_text and candidate_text in raw:
+        chosen = candidate_text
+    elif candidate_text:
+        for line in candidate_text.splitlines():
+            s = line.strip()
+            if s and s in raw:
+                chosen = s
+                break
+        if not chosen:
+            import re as _re
+
+            for chunk in _re.split(r"[.!?\n]+", candidate_text):
+                c = chunk.strip()
+                if len(c) >= 8 and c in raw:
+                    chosen = c
+                    break
+    if not chosen:
+        chosen = raw[:280]
+    return {
+        "text": chosen,
+        "log_seq": getattr(resp, "log_seq", None),
+        "sha256": hashlib.sha256(chosen.encode("utf-8")).hexdigest(),
+    }
+
+
 def _steps_and_quotes(
     history: list[TargetResponse],
     sent_prompts: list[str],
     target_client: TargetClient,
     technique: str,
     account: str | None,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str], list[str]]:
     steps: list[dict[str, Any]] = []
     quotes: list[dict[str, Any]] = []
     distinct: list[str] = []
+    reply_texts: list[str] = []
     for idx, resp in enumerate(history):
         prompt = sent_prompts[idx] if idx < len(sent_prompts) else ""
         if prompt:
             distinct.append(prompt)
-        # Use the contract-configured reply field, not the raw HTTP body, so the quotes the
-        # campaign re-scores with evaluate_oracle match what the oracle expects.
+        # Decoded reply: used by the oracle for the SHA-256 prompt match (carried in evidence).
         reply_text = target_client.extract_chat_reply(resp)
+        if reply_text:
+            reply_texts.append(reply_text)
         steps.append(
             {
                 "action": "chat",
                 "account": account,
                 "message": prompt,
+                "reply": reply_text,
                 "session_id": getattr(resp, "session_id", None),
                 "status": getattr(resp, "status", None),
                 "log_seq": getattr(resp, "log_seq", None),
                 "technique": technique,
             }
         )
-        quotes.append(
-            {
-                "text": reply_text,
-                "log_seq": getattr(resp, "log_seq", None),
-                "sha256": hashlib.sha256((reply_text or "").encode("utf-8")).hexdigest(),
-            }
-        )
-    return steps, quotes, distinct
+        # Quote: raw-body-verbatim so _verify_quotes_in_ledger passes.
+        quotes.append(_verbatim_quote(reply_text, resp))
+    return steps, quotes, distinct, reply_texts
 
 
 def run_multi_turn(
@@ -221,7 +255,7 @@ def run_multi_turn(
 
     verdict = scorer.last_verdict
     candidate_hit = bool(verdict and verdict.matched and verdict.trust_tier == TrustTier.MACHINE_CONFIRMED)
-    steps, quotes, distinct = _steps_and_quotes(
+    steps, quotes, distinct, reply_texts = _steps_and_quotes(
         obj_target.history, obj_target.sent_prompts, target_client, technique, attacker
     )
     return {
@@ -230,6 +264,7 @@ def run_multi_turn(
         "steps": steps,
         "quotes": quotes,
         "distinct_prompts": distinct,
+        "reply_texts": reply_texts,
         "evidence": evidence,
         "turns": len(obj_target.history),
         "attack_outcome": getattr(result, "outcome", None),
