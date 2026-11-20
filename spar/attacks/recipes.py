@@ -14,6 +14,7 @@ from ..guard import KillSwitch
 from ..ledger import Ledger
 from ..policy import CampaignPolicy, ConfigError
 from ..target import TargetClient, TargetResponse
+from .pyrit_executor import adversarial_configured, run_crescendo
 from .pyrit_adapter import (
     Base64Converter,
     BitmapImagePromptConverter,
@@ -814,6 +815,33 @@ def _mission_prompt_extraction(ctx: MissionContext) -> MissionResult:
     expected_sha256 = str(params.get("expected_sha256") or params.get("prompt_truth") or "")
     since = time.time() - 0.05
     min_d = _min_distinct(ctx)
+
+    # When an adversarial LLM is configured, drive the multi-turn attack with PyRIT's real
+    # CrescendoAttack executor, scored by Spar's deterministic oracle. The attacker model
+    # writes and escalates the prompts; whether the system prompt actually leaked is decided
+    # by the canary/sha256 oracle, not the model. Without an attacker LLM (the keyless demo
+    # and CI), fall back to the deterministic escalation ladder below.
+    if adversarial_configured(ctx.policy):
+        pr = run_crescendo(
+            ctx.objective, ctx.target_client, ctx.policy,
+            canary=ctx.canary, session_id=ctx.session_id, attacker=attacker,
+            max_turns=max(5, min_d),
+        )
+        evidence = {
+            "since": since, "canary": ctx.canary, "session_id": ctx.session_id,
+            "attacker": attacker, "victim": victim, "auditor": auditor,
+            "expected_sha256": expected_sha256, "prompt_truth": expected_sha256,
+            "engine": "pyrit.CrescendoAttack",
+        }
+        return MissionResult(
+            technique="prompt_extraction",
+            candidate_hit=bool(pr["candidate_hit"]),
+            evidence=evidence,
+            steps=pr["steps"],
+            quotes=pr["quotes"],
+            distinct_prompts=pr["distinct_prompts"],
+            unverified=False,
+        )
 
     loop = CrescendoAttackLoop(
         ctx.target_client,
