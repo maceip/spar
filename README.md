@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo/spar-hero.gif" alt="Spar — Autonomous AI Red-Teaming & Penetration Testing" width="260">
+  <img src="assets/logo/spar-hero.gif" alt="Spar — Autonomous AI Red-Teaming & Penetration Testing" width="320">
 </p>
 
 <p align="center">
