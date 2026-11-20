@@ -1,0 +1,88 @@
+# Spar configuration for TicketBot (independent second target fixture).
+# Uses completely different routes, X-Agent-Token auth header, accounts,
+# field names, and tool names from spar.yaml.
+
+target:
+  base_url: "http://127.0.0.1:8766"
+  contract:
+    auth:
+      header: "X-Agent-Token"
+      prefix: ""
+    chat:
+      method: "POST"
+      path: "/v1/ask"
+      message_field: "prompt"
+      session_field: "session"
+      reply_field: "answer"
+    invoke:
+      method: "POST"
+      path: "/v1/tools/run"
+      tool_field: "name"
+      args_field: "input"
+    manifest:
+      method: "GET"
+      path: "/v1/capabilities"
+    version:
+      method: "GET"
+      path: "/v1/version"
+    reset:
+      method: "POST"
+      path: "/v1/admin/reset"
+    witnesses:
+      tool_log:
+        method: "GET"
+        path: "/v1/audit/log"
+        events_field: "records"
+      positive_control:
+        method: "POST"
+        path: "/v1/audit/heartbeat"
+        control_field: "marker"
+      outbox:
+        method: "GET"
+        path: "/v1/mailboxes/{account}"
+        items_field: "messages"
+      memory:
+        method: "GET"
+        path: "/v1/notes"
+        items_field: "notes"
+
+scope:
+  allowlist_hosts:
+    - "127.0.0.1"
+    - "localhost"
+  allow_risky: false
+
+accounts:
+  - name: maya
+    token_env: "SPAR_SECOND_TOKEN_MAYA"
+    role: user
+  - name: liam
+    token_env: "SPAR_SECOND_TOKEN_LIAM"
+    role: user
+  - name: secops
+    token_env: "SPAR_SECOND_TOKEN_SECOPS"
+    role: auditor
+
+budget:
+  max_usd: 10.0
+  max_requests: 5000
+  max_duration_s: 1800
+  rate_per_min: 600
+
+trials:
+  n: 20
+  min_distinct_techniques: 2
+
+llm:
+  base_url: ""
+  api_key_env: "OPENAI_API_KEY"
+  model: ""
+  usd_per_1k_input: 0.0
+  usd_per_1k_output: 0.0
+
+critic_llm:
+  base_url: ""
+  api_key_env: "SPAR_CRITIC_API_KEY"
+  model: ""
+  usd_per_1k_input: 0.0
+  usd_per_1k_output: 0.0

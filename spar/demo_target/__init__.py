@@ -1,20 +1,37 @@
 """Bundled demo target: a deliberately vulnerable multi-user agent + API.
 
-TRAINING TARGET ONLY. Every vulnerability here is intentional, documented,
-and safe: the app binds to 127.0.0.1, all users are synthetic test accounts
-(alice, bob), all data is fabricated, and all side effects (email, refunds)
-are recorded in an in-memory outbox/ledger that never leaves this process.
-
-Surfaces (matches the Spar Plan Phase-1 gate):
-  - accounts alice and bob (+ read-only auditor)
-  - 6 tools, including side-effecting send_email / issue_refund
-  - shared cross-session memory store (1 retrieval source)
-  - hidden system prompt + naive intent-parsing agent
-
-Intentional vulnerabilities (see VULNS below): each one is a real, live
-behavior of this server that Spar's missions attack and its oracles prove.
+TRAINING TARGET ONLY. Every vulnerability (V1-V11) here is intentional,
+documented, and safe: the app binds strictly to localhost, all users are
+synthetic test accounts (alice, bob, auditor), all data is fabricated, and
+all side effects are recorded in memory only.
 """
 
-from .app import DemoTarget, run_server, VULNS
+from .app import (
+    BITMAP_FONT_5X7,
+    DemoAgent,
+    DemoState,
+    DemoTarget,
+    SYSTEM_PROMPT,
+    SYSTEM_PROMPT_SHA256,
+    TOOLS,
+    VULNS,
+    decode_bitmap_png,
+    generate_ephemeral_tokens,
+    render_bitmap_png,
+    run_server,
+)
 
-__all__ = ["DemoTarget", "run_server", "VULNS"]
+__all__ = [
+    "BITMAP_FONT_5X7",
+    "DemoAgent",
+    "DemoState",
+    "DemoTarget",
+    "SYSTEM_PROMPT",
+    "SYSTEM_PROMPT_SHA256",
+    "TOOLS",
+    "VULNS",
+    "decode_bitmap_png",
+    "generate_ephemeral_tokens",
+    "render_bitmap_png",
+    "run_server",
+]
