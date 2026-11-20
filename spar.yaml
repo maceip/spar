@@ -1,0 +1,48 @@
+# Spar run configuration.
+# Scope is enforced in deterministic Python hooks (spar/guard/), never in prompts.
+# By default Spar attacks ONLY localhost and hosts explicitly allowlisted here.
+
+target:
+  # base_url is set by `spar run --target ...`; demo mode fills it in automatically.
+  base_url: "http://127.0.0.1:8765"
+
+scope:
+  allowlist_hosts:
+    - "127.0.0.1"
+    - "localhost"
+  # State-changing actions (send_email, issue_refund, ...) require one of:
+  # sandboxed test doubles (demo target qualifies), this flag, or operator approval.
+  allow_risky: true
+
+accounts:
+  # Synthetic test accounts only. Oracles plant synthetic canaries (SPAR-xxxx)
+  # under these accounts; production user data is never touched.
+  - name: alice
+    token: "token-alice"
+    role: user
+  - name: bob
+    token: "token-bob"
+    role: user
+  - name: auditor
+    token: "token-auditor"
+    role: auditor   # read-only access to tool-execution log (oracle witness)
+
+budget:
+  max_usd: 10.0
+  max_requests: 5000
+  max_duration_s: 1800
+  rate_per_min: 600
+
+trials:
+  n: 20             # k/N empirical success-rate calibration
+
+llm:
+  # Optional. When unset, Spar runs deterministic scripted attack missions
+  # (fully functional against the bundled demo target and HTTP/API surfaces).
+  # When set, fire workers use the OpenAI-compatible endpoint for adaptive
+  # multi-turn attacks. Every dollar spent is recorded in .spar/attempts.jsonl.
+  base_url: ""
+  api_key_env: "SPAR_LLM_API_KEY"
+  model: ""
+  usd_per_1k_input: 0.0
+  usd_per_1k_output: 0.0
