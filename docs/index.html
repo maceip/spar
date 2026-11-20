@@ -118,11 +118,12 @@
 
       .hero-logo {
         display: block;
-        width: min(320px, 72vw);
+        width: min(260px, 68vw);
         height: auto;
-        margin: 0 auto 24px;
+        margin: 0 auto 20px;
         background: transparent;
-        filter: drop-shadow(0 8px 28px rgba(0, 0, 0, 0.75));
+        mix-blend-mode: screen;
+        filter: brightness(0.94) contrast(1.1);
       }
 
       .hero-title {
@@ -362,9 +363,9 @@
       <div class="hero-center">
         <img
           class="hero-logo"
-          src="assets/spar-title.png"
+          src="assets/spar-hero.gif?v=3"
           alt="Spar — Autonomous AI Red-Teaming & Penetration Testing"
-          width="320"
+          width="260"
         />
         <h1 class="hero-title">A red team for AI agents.</h1>
         <p class="hero-sub">
@@ -496,7 +497,7 @@ spar replay                                      <span class="comment"># re-atta
       </span>
     </footer>
 
-    <script src="sharks.js"></script>
+    <script src="sharks.js?v=3"></script>
     <script>
       (function () {
         var canvas = document.getElementById("sharks-canvas");
