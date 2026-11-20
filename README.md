@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <strong>A red team for AI agents.</strong><br>
-  Point Spar at your agent—and its repo if you have it. It proves which attacks actually work with hard evidence and a success rate, then hands back a report and a failing test.
+  <strong>White-box aim, black-box proof.</strong><br>
+  Spar is a red team for AI agents: it finds the attacks that actually work against your agent, proves each one with evidence and a success rate over repeated trials, and hands back a failing test and a suggested fix.
 </p>
 
 <p align="center">
