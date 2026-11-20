@@ -10,8 +10,10 @@ Spar stress-tests AI assistants like a real attacker—it tries to trick your AI
 
 ## Try it in 2 commands
 
+Requires Python 3.11–3.14.
+
 ```bash
-pip install -e .
+pip install -e ".[dev]"
 spar demo
 ```
 
@@ -28,19 +30,20 @@ spar demo
 
 1. **Map** — Reads your code (or probes your live AI) to see what tools and data it can reach.
 2. **Attack & Prove** — Runs repeated trials and only reports an issue when hard evidence confirms it worked and an independent second check reproduces it.
-3. **Hand off & Re-test** — Hands back a clear report, a failing test, and a starting fix, then re-attacks after a patch lands to confirm the fix holds without breaking normal use.
+3. **Hand off & Re-test** — Hands back a clear report, a failing test, and remediation context for your team or external tools, then re-attacks after a patch lands to confirm the fix holds without breaking normal use.
 
 ## Measured results
 
 - **Demo AI (`5 × 20` trials):** `11/11` vulnerabilities proven reliably across all 5 runs (`$0.00` model cost) — [sample report](evals/recorded_demo_run/report.md).
-- **AgentDojo benchmark (`gpt-4o-mini`):** Spent `$0.176421` (`~$0.18`) across `458` model calls, caught `17` false alarms before reporting, and matched human audit `20/20` (`0%` disagreement) — [full results](evals/RESULTS.md).
+- **AgentDojo benchmark (`gpt-4o-mini`):** Spent `$0.176421` (`~$0.18`) across `458` model calls and caught `17` false alarms before reporting — [full results](evals/RESULTS.md).
+- **Human audit:** `0%` disagreement (`0/20`) across 20 randomly sampled verdicts spanning both Demo AI and AgentDojo runs.
 
 ## Run on your own AI
 
 ```bash
 spar run --target http://localhost:8000 --repo .   # with source code
 spar run --target http://localhost:8000          # without source code
-spar replay --apply-fix                          # apply fix and re-test
+spar replay                                      # re-attack after a patch lands
 ```
 
 ## Built-in safety
