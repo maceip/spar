@@ -130,6 +130,14 @@ def _write_sarif_safe(
         )
         return sarif_path
     except Exception as exc:  # SARIF export must never fail a run.
+        # A failed regeneration must not leave a prior (e.g. pre-replay) artifact in place
+        # for a caller to upload as if current; remove it on the failure path.
+        try:
+            stale = Path(run_dir) / "findings.sarif"
+            if stale.exists():
+                stale.unlink()
+        except OSError:
+            pass
         ledger.append("sarif.error", {"error": str(exc)[:200], "stage": stage}, task_id=stage)
         return None
 
@@ -849,21 +857,27 @@ def run_campaign(
             if not integrity.passed:
                 overall_outcome = Outcome.INCONCLUSIVE
 
-            # Write SARIF only on a conclusive outcome, decided after the integrity audit:
-            # REPRODUCED emits the findings, NOT_REPRODUCED emits a zero-result document to
-            # close prior alerts - but only if at least one objective actually ran to a
-            # conclusive result, so a campaign that discovered no objectives (empty plan)
-            # does not emit a clean document that closes a consumer's still-live alerts
-            # without having tested anything. An INCONCLUSIVE run - halted, unhealthy
-            # witnesses, or a failed integrity audit - writes nothing, even with findings.
-            conclusive_objectives = [
-                oo for oo in objective_outcomes
+            # Write SARIF only for a COMPLETE campaign, decided after the integrity audit.
+            # A SARIF upload is authoritative for the whole tool: a consumer closes any
+            # prior alert the document omits. So emit only when the run did not halt and
+            # every planned objective reached a conclusive (reproduced/not_reproduced)
+            # outcome - never for a partial run (halted, unhealthy witness, or an
+            # inconclusive objective), even if earlier objectives produced real findings,
+            # which still live in report.md and findings/. A complete clean run emits a
+            # zero-result document to close prior alerts; a complete run with findings
+            # emits them.
+            concluded = sum(
+                1 for oo in objective_outcomes
                 if str(oo.get("outcome")) in (Outcome.REPRODUCED.value, Outcome.NOT_REPRODUCED.value)
-            ]
+            )
+            campaign_complete = (
+                halt_reason is None
+                and len(objectives) > 0
+                and concluded == len(objectives)
+                and overall_outcome in (Outcome.REPRODUCED, Outcome.NOT_REPRODUCED)
+            )
             sarif_path: Path | None = None
-            if overall_outcome == Outcome.REPRODUCED or (
-                overall_outcome == Outcome.NOT_REPRODUCED and conclusive_objectives
-            ):
+            if campaign_complete:
                 sarif_path = _write_sarif_safe(
                     findings, plan, run_dir, repo_path, secrets_list, ledger, "campaign"
                 )

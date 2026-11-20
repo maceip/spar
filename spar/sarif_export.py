@@ -213,6 +213,20 @@ def _finding_to_dict(
     else:
         status = "confirmed"
 
+    # Map Spar's remediation state onto the builder's patch_status vocabulary so the SARIF
+    # reflects whether a fix exists and whether it was verified, instead of always "none".
+    fix_proposal = _fget(finding, "fix_proposal")
+    has_fix = isinstance(fix_proposal, dict) and bool(fix_proposal)
+    if fix_status == "verified" and hardened:
+        patch_status = "VERIFIED_SECURE"
+    elif fix_status == "verified":
+        # A fix was verified by replay but the finding still reproduces: verification failed.
+        patch_status = "VERIFICATION_FAILED"
+    elif has_fix:
+        patch_status = "MITIGATION_PROPOSED"
+    else:
+        patch_status = ""
+
     loc = _location_for(surfaces_by_obj.get(oid, []), _exercised_symbols(finding))
     if loc is not None:
         filepath, line = loc
@@ -245,6 +259,7 @@ def _finding_to_dict(
         # partialFingerprints from `lineage_id`/`signature`), so a code-scanning
         # consumer can correlate the same finding across runs when its line moves.
         "signature": signature,
+        "patch_status": patch_status,
     }
 
 

@@ -157,6 +157,18 @@ def test_sarif_rebases_subdir_scan_path(tmp_path, monkeypatch):
     assert uri == "spar/demo_target/app.py"
 
 
+def test_sarif_patch_status_reflects_remediation(tmp_path):
+    plan = {"run_id": "r", "objectives": [{"id": "obj-01", "surface_ids": ["send@a.py:1"]}]}
+    # A finding with a synthesized fix but no verification -> MITIGATION_PROPOSED.
+    f = Finding(id="find-01", objective="x", objective_id="obj-01", technique="tool_misuse",
+                severity="HIGH", k=5, n=20, oracle="tool_log", outcome="reproduced",
+                fix_proposal={"guidance": "deny cross-tenant"}, fix_status="suggested")
+    path, _, _ = write_findings_sarif([f], plan, tmp_path, repo=".")
+    res = json.loads(path.read_text())["runs"][0]["results"][0]
+    assert res["properties"]["spar-patch-status"] == "MITIGATION_PROPOSED"
+    assert "mantis-patch-status" not in res["properties"]
+
+
 def test_sarif_empty_for_clean_run(tmp_path):
     path, count, skipped = write_findings_sarif([], {"run_id": "r", "objectives": []}, tmp_path, repo=".")
     assert count == 0 and skipped == []
