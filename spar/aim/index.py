@@ -42,12 +42,19 @@ def index_repo(repo_path: Path) -> dict:
             continue
         index["files"] += 1
         rel = str(path.relative_to(repo))
+        # docstring nodes are documentation, not secret prompt candidates
+        docstring_ids = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                ds = ast.get_docstring(node, clean=False)
+                if ds and node.body and isinstance(node.body[0], ast.Expr) and isinstance(node.body[0].value, ast.Constant):
+                    docstring_ids.add(id(node.body[0].value))
         for node in ast.walk(tree):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
                 s = node.value
                 if s.startswith("/") and len(s) > 1 and " " not in s:
                     index["routes"].append({"path": s, "file": rel, "line": node.lineno})
-                if len(s) >= PROMPT_MIN_LEN:
+                if len(s) >= PROMPT_MIN_LEN and id(node) not in docstring_ids:
                     index["prompts"].append(
                         {
                             "file": rel,
