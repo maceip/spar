@@ -85,9 +85,10 @@ def test_sarif_export_anchors_and_relabels(tmp_path):
     loc_200 = by_rule["CWE-200"]["locations"][0]["physicalLocation"]
     assert loc_200["artifactLocation"]["uri"] == "report.md"
 
-    # The finding id is emitted as a fingerprint under a spar/ key for cross-run identity.
+    # A stable fingerprint is emitted under a spar/ key for cross-run identity.
     fps = by_rule["CWE-285"].get("partialFingerprints") or {}
-    assert any(k.startswith("spar/") for k in fps) and "find-01" in fps.values()
+    assert any(k.startswith("spar/") for k in fps)
+    assert all(len(v) == 16 and all(c in "0123456789abcdef" for c in v) for v in fps.values())
 
     # No mantis-prefixed result properties or fingerprint keys leak through.
     assert not any(k.startswith("mantis") for res in run["results"] for k in res.get("properties", {}))
@@ -100,6 +101,36 @@ def test_sarif_skips_symbol_at_seq_surface_as_location():
     assert _location_for(["send_email@spar/demo_target/app.py:1049"]) == ("spar/demo_target/app.py", 1049)
     assert _location_for(["capability_probe@seq:12"]) is None
     assert _location_for(["bare/path.py:7"]) == ("bare/path.py", 7)  # defensive: no symbol@ prefix
+
+
+def test_sarif_fingerprint_is_stable_across_renumbered_ids(tmp_path):
+    # The run-local finding id renumbers across runs (assigned from len(findings)); the
+    # fingerprint must not, so the same technique+objective keeps the same identity.
+    plan = {"run_id": "r", "objectives": [{"id": "obj-07", "surface_ids": ["send@spar/demo_target/app.py:10"]}]}
+    f_run1 = Finding(id="find-02-tool_misuse", objective="x", objective_id="obj-07",
+                     technique="tool_misuse", severity="HIGH", k=5, n=20, oracle="tool_log", outcome="reproduced")
+    f_run2 = Finding(id="find-01-tool_misuse", objective="x", objective_id="obj-07",
+                     technique="tool_misuse", severity="HIGH", k=6, n=20, oracle="tool_log", outcome="reproduced")
+    p1, _, _ = write_findings_sarif([f_run1], plan, tmp_path / "a", repo=".")
+    p2, _, _ = write_findings_sarif([f_run2], plan, tmp_path / "b", repo=".")
+    fp1 = json.loads(p1.read_text())["runs"][0]["results"][0]["partialFingerprints"]
+    fp2 = json.loads(p2.read_text())["runs"][0]["results"][0]["partialFingerprints"]
+    assert fp1 == fp2
+
+
+def test_sarif_rebases_subdir_scan_path(tmp_path, monkeypatch):
+    # When --repo points at a subdirectory, index_repo yields a path relative to it
+    # (e.g. "app.py"); the emitted SARIF path must be rooted at the checkout.
+    root = tmp_path / "checkout"
+    (root / ".git").mkdir(parents=True)
+    subdir = root / "spar" / "demo_target"
+    subdir.mkdir(parents=True)
+    plan = {"run_id": "r", "objectives": [{"id": "obj-01", "surface_ids": ["send@app.py:10"]}]}
+    f = Finding(id="find-01", objective="x", objective_id="obj-01", technique="tool_misuse",
+                severity="HIGH", k=5, n=20, oracle="tool_log", outcome="reproduced")
+    path, _, _ = write_findings_sarif([f], plan, tmp_path / "out", repo=subdir)
+    uri = json.loads(path.read_text())["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+    assert uri == "spar/demo_target/app.py"
 
 
 def test_sarif_empty_for_clean_run(tmp_path):

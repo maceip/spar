@@ -815,10 +815,6 @@ def run_campaign(
                 halt=halt_reason,
             )
 
-            sarif_path = _write_sarif_safe(
-                findings, plan, run_dir, repo_path, secrets_list, ledger, "campaign"
-            )
-
             human_review_path = export_human_review_sample(
                 run_dir,
                 ledger,
@@ -852,6 +848,16 @@ def run_campaign(
             )
             if not integrity.passed:
                 overall_outcome = Outcome.INCONCLUSIVE
+
+            # Write SARIF only once the outcome is final. Real findings always emit; a
+            # zero-result (clean) document emits only on a conclusive NOT_REPRODUCED run.
+            # An inconclusive or halted run writes nothing, so its artifact cannot
+            # wrongly close a code-scanning consumer's still-live alerts.
+            sarif_path: Path | None = None
+            if findings or overall_outcome == Outcome.NOT_REPRODUCED:
+                sarif_path = _write_sarif_safe(
+                    findings, plan, run_dir, repo_path, secrets_list, ledger, "campaign"
+                )
 
             safe_write_text(root_path / "latest", f"{policy.run_id}\n", secrets=secrets_list)
             finished_at = time.time()
@@ -1425,11 +1431,6 @@ def run_replay(
                 ledger,
                 secrets=secrets_list,
             )
-            # Replay mutates finding state (fix_status / label / reattack) and can turn a
-            # reproduced finding into not_reproduced after a verified fix. Regenerate the
-            # SARIF from the updated findings so the artifact never keeps publishing a
-            # vulnerability as live that this run has just marked hardened.
-            _write_sarif_safe(all_findings, plan, rd, resolved_repo, secrets_list, ledger, "replay")
             report_text = report_path.read_text(encoding="utf-8")
             integrity = audit_run_integrity(
                 rd,
@@ -1455,6 +1456,14 @@ def run_replay(
                 overall_outcome = Outcome.REPRODUCED
             else:
                 overall_outcome = Outcome.NOT_REPRODUCED
+
+            # Replay mutates finding state (fix_status / label / reattack) and can turn a
+            # reproduced finding into not_reproduced after a verified fix. Regenerate SARIF
+            # from the updated findings so a hardened finding stops being published as live;
+            # emit the clean (empty) document only on a conclusive NOT_REPRODUCED replay, and
+            # write nothing for an inconclusive one.
+            if all_findings or overall_outcome == Outcome.NOT_REPRODUCED:
+                _write_sarif_safe(all_findings, plan, rd, resolved_repo, secrets_list, ledger, "replay")
 
             return ReplaySummary(
                 run_dir=rd,

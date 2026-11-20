@@ -14,6 +14,7 @@ surface are anchored to ``report.md`` in the run directory.
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 from typing import Any, Iterable
@@ -56,6 +57,41 @@ def _objective_surfaces(plan: dict[str, Any]) -> dict[str, list[str]]:
         if oid and isinstance(sids, list):
             out[oid] = [str(s) for s in sids]
     return out
+
+
+def _vcs_root(start: Path) -> Path | None:
+    """Nearest ancestor containing a ``.git`` entry, or None."""
+    cur = start
+    for _ in range(64):
+        if (cur / ".git").exists():
+            return cur
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    return None
+
+
+def _rebase_to_root(filepath: str, repo: Path | str | None) -> str:
+    """Rebase a path recorded relative to the scan target onto the checkout root.
+
+    ``index_repo`` records paths relative to the scanned ``repo`` directory, which may
+    be a subdirectory (e.g. the demo scans ``spar/demo_target`` and yields ``app.py``).
+    SARIF consumers resolve relative URIs from the checkout root, so a subdirectory scan
+    must be prefixed. Idempotent when ``repo`` is already the checkout root, and a no-op
+    if anything cannot be resolved.
+    """
+    if not repo:
+        return filepath
+    try:
+        repo_abs = Path(repo).resolve()
+        target = (repo_abs / filepath).resolve()
+        root = _vcs_root(repo_abs) or repo_abs
+        rel = os.path.relpath(target, root)
+        if not rel.startswith("..") and not os.path.isabs(rel):
+            return rel.replace(os.sep, "/")
+    except (OSError, ValueError):
+        pass
+    return filepath
 
 
 def _location_for(surface_ids: list[str]) -> tuple[str, int] | None:
@@ -120,9 +156,16 @@ def _finding_to_dict(
     loc = _location_for(surfaces_by_obj.get(oid, []))
     if loc is not None:
         filepath, line = loc
+        filepath = _rebase_to_root(filepath, repo)
         line_numbers: list[int] = [line]
     else:
         filepath, line_numbers = report_rel, [1]
+
+    # Fingerprint from stable semantic identity, NOT the run-local finding id (which is
+    # assigned from len(findings) and renumbers when an earlier objective drops out).
+    # technique + objective_id is fixed by the deterministic plan, so a consumer
+    # correlates the same vulnerability across runs instead of closing and reopening it.
+    signature = hashlib.sha1(f"{technique}|{oid}|{filepath}".encode("utf-8")).hexdigest()[:16]
 
     description = (
         f"{objective} Proven by oracle `{oracle}` at {k}/{n} trials "
@@ -140,7 +183,7 @@ def _finding_to_dict(
         # `signature` is a fingerprint key the vendored builder recognises (it emits
         # partialFingerprints from `lineage_id`/`signature`), so a code-scanning
         # consumer can correlate the same finding across runs when its line moves.
-        "signature": str(_fget(finding, "id") or oid or technique),
+        "signature": signature,
     }
 
 
