@@ -1,0 +1,52 @@
+name: Spar CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  test-and-security-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Spar with dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Run full pytest suite (zero skips allowed)
+        run: python -m pytest -v
+
+      - name: Run live demo smoke test and verify zero secrets
+        run: |
+          rm -rf /tmp/ci-spar spar_tests
+          python -m spar demo --trials 5 --spar-dir /tmp/ci-spar
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          token_re = re.compile(r"\bspar-demo-[a-z0-9_-]+-[A-Za-z0-9_-]{6,}\b")
+          for root in (Path("/tmp/ci-spar"), Path("spar_tests")):
+              assert root.exists(), f"Missing output dir: {root}"
+              for fp in root.rglob("*"):
+                  if fp.is_file():
+                      txt = fp.read_bytes().decode("utf-8", errors="replace")
+                      assert not token_re.search(txt), f"Token leaked in {fp}"
+          print("CI secret scan passed cleanly across /tmp/ci-spar and spar_tests/")
+          PY
+          rm -rf /tmp/ci-spar spar_tests
+
+      - name: Run security mutation test suite (must kill 100%)
+        run: python scripts/mutation_test.py
+
+      - name: Verify demo_target was never mutated in repo
+        run: git diff --exit-code spar/demo_target/

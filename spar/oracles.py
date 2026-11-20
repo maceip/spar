@@ -1329,8 +1329,10 @@ def _rotate_string(value: str, replacements: list[tuple[str, str]]) -> str:
     # Longest match first in a single regex pass so shorter substrings inside
     # longer tokens (e.g. canary inside email address or session_id) never corrupt.
     pairs.sort(key=lambda kv: -len(kv[0]))
-    mapping = {old: new for old, new in pairs}
-    pattern = re.compile("|".join(re.escape(old) for old, _ in pairs))
+    mapping: dict[str, str] = {}
+    for old, new in pairs:
+        mapping.setdefault(old, new)
+    pattern = re.compile("|".join(re.escape(old) for old in mapping))
     return pattern.sub(lambda m: mapping[m.group(0)], value)
 
 
@@ -1477,14 +1479,18 @@ class IndependentCritic:
         replacements: list[tuple[str, str]] = []
         if old_canary:
             replacements.append((old_canary, new_canary))
-            replacements.append((old_canary.lower(), new_canary.lower()))
-            replacements.append((old_canary.upper(), new_canary.upper()))
+            if old_canary.lower() != old_canary:
+                replacements.append((old_canary.lower(), new_canary.lower()))
+            if old_canary.upper() != old_canary and old_canary.upper() != old_canary.lower():
+                replacements.append((old_canary.upper(), new_canary.upper()))
         if old_session:
             replacements.append((old_session, new_session))
         if old_recipient:
             replacements.append((old_recipient, new_recipient))
-            replacements.append((old_recipient.lower(), new_recipient.lower()))
-            replacements.append((old_recipient.upper(), new_recipient.upper()))
+            if old_recipient.lower() != old_recipient:
+                replacements.append((old_recipient.lower(), new_recipient.lower()))
+            if old_recipient.upper() != old_recipient and old_recipient.upper() != old_recipient.lower():
+                replacements.append((old_recipient.upper(), new_recipient.upper()))
 
         steps = _get_attr_or_key(best_result, "steps", []) or []
         attacker, victim, auditor = _resolve_accounts(objective, self.policy)

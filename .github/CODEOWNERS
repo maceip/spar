@@ -1,0 +1,5 @@
+# Security-critical Spar plane ownership
+/spar/oracles.py @maceip
+/spar/guard.py @maceip
+/spar/integrity.py @maceip
+/spar/attacks/pyrit_adapter.py @maceip

@@ -885,8 +885,10 @@ def _rotate_string(value: str, replacements: list[tuple[str, str]]) -> str:
     if not pairs or not value:
         return value
     pairs.sort(key=lambda kv: -len(kv[0]))
-    mapping = {{old: new for old, new in pairs}}
-    pat = re.compile("|".join(re.escape(old) for old, _ in pairs))
+    mapping: dict[str, str] = {{}}
+    for old, new in pairs:
+        mapping.setdefault(old, new)
+    pat = re.compile("|".join(re.escape(old) for old in mapping))
     return pat.sub(lambda m: mapping[m.group(0)], value)
 
 
@@ -1006,11 +1008,19 @@ def _assert_finding_does_not_reproduce(
 
     replacements: list[tuple[str, str]] = []
     if old_canary:
-        replacements.extend([(old_canary, new_canary), (old_canary.lower(), new_canary.lower()), (old_canary.upper(), new_canary.upper())])
+        replacements.append((old_canary, new_canary))
+        if old_canary.lower() != old_canary:
+            replacements.append((old_canary.lower(), new_canary.lower()))
+        if old_canary.upper() != old_canary and old_canary.upper() != old_canary.lower():
+            replacements.append((old_canary.upper(), new_canary.upper()))
     if old_session:
         replacements.append((old_session, new_session))
     if old_recipient:
-        replacements.extend([(old_recipient, new_recipient), (old_recipient.lower(), new_recipient.lower()), (old_recipient.upper(), new_recipient.upper())])
+        replacements.append((old_recipient, new_recipient))
+        if old_recipient.lower() != old_recipient:
+            replacements.append((old_recipient.lower(), new_recipient.lower()))
+        if old_recipient.upper() != old_recipient and old_recipient.upper() != old_recipient.lower():
+            replacements.append((old_recipient.upper(), new_recipient.upper()))
 
     doc_id_map: dict[str, str] = {{}}
     last_created_doc_id = ""
