@@ -849,12 +849,13 @@ def run_campaign(
             if not integrity.passed:
                 overall_outcome = Outcome.INCONCLUSIVE
 
-            # Write SARIF only once the outcome is final. Real findings always emit; a
-            # zero-result (clean) document emits only on a conclusive NOT_REPRODUCED run.
-            # An inconclusive or halted run writes nothing, so its artifact cannot
-            # wrongly close a code-scanning consumer's still-live alerts.
+            # Write SARIF only on a conclusive outcome, decided after the integrity audit:
+            # REPRODUCED emits the findings, NOT_REPRODUCED emits a zero-result document to
+            # close prior alerts. An INCONCLUSIVE run - halted, unhealthy witnesses, or a
+            # failed integrity audit - writes nothing, even if it produced findings, so an
+            # unvalidated run's artifact can never publish or close a consumer's alerts.
             sarif_path: Path | None = None
-            if findings or overall_outcome == Outcome.NOT_REPRODUCED:
+            if overall_outcome in (Outcome.REPRODUCED, Outcome.NOT_REPRODUCED):
                 sarif_path = _write_sarif_safe(
                     findings, plan, run_dir, repo_path, secrets_list, ledger, "campaign"
                 )
@@ -1459,10 +1460,10 @@ def run_replay(
 
             # Replay mutates finding state (fix_status / label / reattack) and can turn a
             # reproduced finding into not_reproduced after a verified fix. Regenerate SARIF
-            # from the updated findings so a hardened finding stops being published as live;
-            # emit the clean (empty) document only on a conclusive NOT_REPRODUCED replay, and
-            # write nothing for an inconclusive one.
-            if all_findings or overall_outcome == Outcome.NOT_REPRODUCED:
+            # from the updated findings so a hardened finding stops being published as live.
+            # Gate on the conclusive outcome (after the integrity audit): REPRODUCED or
+            # NOT_REPRODUCED emits; an INCONCLUSIVE replay writes nothing.
+            if overall_outcome in (Outcome.REPRODUCED, Outcome.NOT_REPRODUCED):
                 _write_sarif_safe(all_findings, plan, rd, resolved_repo, secrets_list, ledger, "replay")
 
             return ReplaySummary(
