@@ -56,7 +56,7 @@ def _run_pytest(tests_path: Path) -> None:
     env = dict(os.environ)
     env.pop("SPAR_TARGET_URL", None)
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", str(tests_path), "-q", "--no-header", "-x", "--tb=line"],
+        [sys.executable, "-m", "pytest", str(tests_path), "-q", "--no-header", "--tb=line"],
         env=env, cwd=Path.cwd(),
     )
     if proc.returncode == 0:
