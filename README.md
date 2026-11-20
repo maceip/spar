@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo/spar-lockup.png" alt="Spar" width="520">
+  <img src="assets/logo/spar-hero.gif" alt="Spar — Autonomous AI Red-Teaming & Penetration Testing" width="520">
 </p>
 
 Spar stress-tests AI assistants like a real attacker—it tries to trick your AI into leaking data or misusing its tools, proves which attacks actually work, and hands back a report and a failing test you can pass straight to your engineering or remediation workflow.
