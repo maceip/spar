@@ -127,9 +127,9 @@ class DemoTarget:
 
     def tool_list_docs(self, user: dict, args: dict) -> dict:
         # Only lists the caller's docs (this one is correct); attackers must
-        # guess or enumerate ids to reach other users' docs via get_doc.
+        # reach other users' docs via get_doc's missing ownership check.
         mine = [d for d in self.state.docs.values() if d["owner"] == user["name"]]
-        return {"docs": [{"title": d["title"]} for d in mine]}
+        return {"docs": [{"doc_id": did, "title": d["title"]} for did, d in self.state.docs.items() if d["owner"] == user["name"]]}
 
     def tool_search_memory(self, user: dict, args: dict) -> dict:
         q = str(args.get("query", ""))
@@ -393,6 +393,21 @@ class _Handler(BaseHTTPRequestHandler):
             tool = str(body.get("tool", ""))
             args = body.get("args") if isinstance(body.get("args"), dict) else {}
             return self._send(200, t.invoke(user, tool, args))
+        if path == "/audit/reset":
+            # Sandbox test-double control: lets the trial runner restore a
+            # pristine state between k/N trials. Auditor role only.
+            if user["role"] != "auditor":
+                return self._send(403, {"error": "auditor role required"})
+            fresh = DemoState.seeded()
+            with t.state.lock:
+                t.state.users = fresh.users
+                t.state.docs = fresh.docs
+                t.state.outbox = fresh.outbox
+                t.state.memory = fresh.memory
+                t.state.refunds = fresh.refunds
+                t.state.tool_log = fresh.tool_log
+                t.state.sessions = fresh.sessions
+            return self._send(200, {"reset": True})
         return self._send(404, {"error": f"no route: {path}"})
 
 
