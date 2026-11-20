@@ -29,8 +29,9 @@ from typing import Any
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, construct_response_from_request
 from pyrit.prompt_target import PromptTarget, TargetConfiguration
 
+from ..guard import GuardViolation
 from ..oracles import TrustTier
-from ..policy import CampaignPolicy, LLMProviderConfig
+from ..policy import CampaignPolicy, ConfigError, LLMProviderConfig
 from ..target import TargetClient, TargetResponse
 from .oracle_scorer import SparOracleScorer
 from .pyrit_adapter import SparPyRITTarget, _run_sync, ensure_pyrit_initialized
@@ -202,7 +203,21 @@ def run_multi_turn(
         attack_scoring_config=AttackScoringConfig(objective_scorer=scorer),
         max_turns=int(max_turns),
     )
-    result = _run_sync(attack.execute_async(objective=obj_text))
+
+    # Contain adversarial-provider failures at this boundary. A rejected key, a rate limit,
+    # or an unavailable attacker endpoint raises PyRIT/OpenAI exceptions the campaign loop
+    # does not classify, which would abort the whole campaign. Here any failure degrades to
+    # an UNVERIFIED trial over whatever turns completed: the oracle's own target traffic
+    # (not the attacker model) already went through the guard, so partial evidence stands,
+    # and the trial is marked inconclusive rather than crashing the run.
+    error: str | None = None
+    result = None
+    try:
+        result = _run_sync(attack.execute_async(objective=obj_text))
+    except (GuardViolation, ConfigError):
+        raise  # guard/scope/config failures are the loop's to classify as inconclusive
+    except Exception as exc:  # provider/transport failure: record, do not propagate
+        error = f"{type(exc).__name__}: {str(exc)[:200]}"
 
     verdict = scorer.last_verdict
     candidate_hit = bool(verdict and verdict.matched and verdict.trust_tier == TrustTier.MACHINE_CONFIRMED)
@@ -218,4 +233,5 @@ def run_multi_turn(
         "evidence": evidence,
         "turns": len(obj_target.history),
         "attack_outcome": getattr(result, "outcome", None),
+        "error": error,
     }

@@ -827,12 +827,15 @@ def _mission_prompt_extraction(ctx: MissionContext) -> MissionResult:
             canary=ctx.canary, session_id=ctx.session_id, attacker=attacker,
             max_turns=max(5, min_d),
         )
+        pr_error = pr.get("error")
         evidence = {
             "since": since, "canary": ctx.canary, "session_id": ctx.session_id,
             "attacker": attacker, "victim": victim, "auditor": auditor,
             "expected_sha256": expected_sha256, "prompt_truth": expected_sha256,
-            "engine": "pyrit.CrescendoAttack",
+            "engine": "pyrit.RedTeamingAttack",
         }
+        if pr_error:
+            evidence["adversarial_error"] = pr_error
         return MissionResult(
             technique="prompt_extraction",
             candidate_hit=bool(pr["candidate_hit"]),
@@ -840,7 +843,10 @@ def _mission_prompt_extraction(ctx: MissionContext) -> MissionResult:
             steps=pr["steps"],
             quotes=pr["quotes"],
             distinct_prompts=pr["distinct_prompts"],
-            unverified=False,
+            # A contained adversarial-provider failure marks the trial unverified rather
+            # than a clean miss, so a flaky attacker endpoint does not read as "not vulnerable".
+            unverified=bool(pr_error),
+            notes=(f"adversarial provider error: {pr_error}" if pr_error else ""),
         )
 
     loop = CrescendoAttackLoop(

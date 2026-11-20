@@ -122,3 +122,36 @@ def test_guarded_adversarial_target_routes_through_guard():
     assert calls["provider"] is llm
     assert [m["role"] for m in calls["messages"]] == ["system", "user"]
     assert out[0].message_pieces[-1].converted_value == "next attacker prompt"
+
+
+def test_run_multi_turn_contains_provider_failure(monkeypatch):
+    """A provider exception degrades to an UNVERIFIED trial, never crashes the campaign."""
+    import spar.attacks.pyrit_executor as pe
+    from spar.policy import LLMProviderConfig
+
+    class BoomAttack:
+        def __init__(self, **kw):
+            pass
+
+        def execute_async(self, **kw):
+            raise RuntimeError("openai.AuthenticationError: invalid key")
+
+    # Patch PyRIT pieces so no network/model is needed.
+    monkeypatch.setattr(pe, "ensure_pyrit_initialized", lambda: None)
+    monkeypatch.setattr(pe, "SparPyRITTarget", lambda **kw: type("T", (), {"history": [], "sent_prompts": []})())
+    monkeypatch.setattr(pe, "SparOracleScorer", lambda **kw: type("S", (), {"last_verdict": None})())
+    monkeypatch.setattr(pe, "GuardedAdversarialTarget", lambda **kw: object())
+
+    import pyrit.executor.attack as pa
+    import pyrit.executor.attack.multi_turn.red_teaming as rt
+    monkeypatch.setattr(pa, "AttackAdversarialConfig", lambda **kw: None)
+    monkeypatch.setattr(pa, "AttackScoringConfig", lambda **kw: None)
+    monkeypatch.setattr(rt, "RedTeamingAttack", BoomAttack)
+    monkeypatch.setattr(pe, "_run_sync", lambda coro: coro)
+
+    llm = LLMProviderConfig(base_url="https://api.openai.com/v1", model="gpt-4o-mini", api_key_env="OPENAI_API_KEY")
+    policy = type("P", (), {"llm": llm})()
+    res = pe.run_multi_turn({"technique": "prompt_extraction", "objective": "x"}, object(), policy,
+                            canary="c", session_id="s", attacker="alice", max_turns=3)
+    assert res["candidate_hit"] is False
+    assert res["error"] and "AuthenticationError" in res["error"]
