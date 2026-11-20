@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -47,10 +48,14 @@ def build_plan(recon: dict, index: dict | None, base_url: str, trials_n: int, re
                 tools[name] = schema
 
     prompts = (index or {}).get("prompts", [])
+    named = (index or {}).get("named_strings", [])
     prompt_truth = None
-    if prompts:
-        # longest recovered prompt constant is the system-prompt candidate
-        best = max(prompts, key=lambda p: p["len"])
+    if named or prompts:
+        # Prefer named constants whose name says prompt/policy/instruction
+        # (e.g. SYSTEM_PROMPT); fall back to the longest anonymous literal.
+        preferred = [c for c in named if re.search(r"(?i)prompt|policy|instruction|system", c["name"])]
+        pool = preferred or named or prompts
+        best = max(pool, key=lambda p: p["len"])
         prompt_truth = {"sha256": best["sha256"], "file": best["file"], "line": best["line"]}
 
     shared_memory = bool(recon.get("retrieval_sources")) or bool((index or {}).get("memory_paths"))

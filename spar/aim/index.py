@@ -31,6 +31,7 @@ def index_repo(repo_path: Path) -> dict:
         "routes": [],
         "tools": [],
         "prompts": [],
+        "named_strings": [],
         "auth_handlers": [],
         "memory_paths": [],
         "functions": [],
@@ -79,6 +80,22 @@ def index_repo(repo_path: Path) -> dict:
                     index["auth_handlers"].append({"name": fname, "file": rel, "line": node.lineno})
                 if src_attrs & {"memory"} and fname not in ("tool_add_memory",):
                     index["memory_paths"].append({"name": fname, "file": rel, "line": node.lineno})
+            # named module-level string constants (SYSTEM_PROMPT = "..."):
+            # the strongest system-prompt candidates for white-box aiming
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                s = node.value.value
+                if len(s) >= PROMPT_MIN_LEN:
+                    for tgt in node.targets:
+                        if isinstance(tgt, ast.Name):
+                            index["named_strings"].append(
+                                {
+                                    "name": tgt.id,
+                                    "file": rel,
+                                    "line": node.lineno,
+                                    "sha256": hashlib.sha256(s.encode("utf-8")).hexdigest(),
+                                    "len": len(s),
+                                }
+                            )
             # tool schema dict literals: {"name": ..., "params": ...}
             if isinstance(node, ast.Dict):
                 keys = {k.value for k in node.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
