@@ -13,6 +13,7 @@ from typing import Any, Iterable
 
 from .guard import GuardViolation, UntrustedReply
 from .ledger import Ledger
+from .third_party.mantis import evidence as mantis_evidence
 from .policy import (
     CampaignPolicy,
     ConfigError,
@@ -792,7 +793,15 @@ def _llm_recon_claims(
         raw, _ = target_client.http.llm_chat(messages, provider=llm_cfg, max_tokens=512, temperature=0.0)
         parsed = json.loads(raw)
         if isinstance(parsed, dict) and isinstance(parsed.get("claims"), list):
-            return [c for c in parsed["claims"] if isinstance(c, dict)]
+            # These claims are authored by the model from untrusted target content, so they
+            # are intent-tier. Mantis's invariant (evidence.filter_claim / may_set_verdict)
+            # strips any verdict field a non-code source has no standing to assert: a claim
+            # that smuggles e.g. `status: confirmed` cannot promote itself to a finding.
+            return [
+                mantis_evidence.filter_claim(c, mantis_evidence.TIER_INTENT)
+                for c in parsed["claims"]
+                if isinstance(c, dict)
+            ]
     except Exception:
         return []
     return []

@@ -1,0 +1,32 @@
+Spar
+Copyright 2026 Ryan MacArthur
+
+This product includes software developed at Google LLC (Google Mantis).
+
+Vendored third-party code
+-------------------------
+
+spar/third_party/mantis/ contains modules copied from Google Mantis
+(https://github.com/google/mantis), licensed under the Apache License, Version 2.0.
+The full license text is in spar/third_party/mantis/LICENSE.
+
+Source commit: e2205c759cc4e24f85665028e5e28933719f7df5
+
+Files and modifications:
+
+- sarif.py   : copied from reference/core/sarif.py. Unmodified except that its three
+               deferred imports (from core.database / from core.llm_gateway) are
+               repointed to the vendored sibling shims _status and _egress. The SARIF
+               construction and validation logic is byte-for-byte upstream.
+- evidence.py: copied verbatim from reference/core/evidence.py.
+- _status.py : the finding-status tuples and the is_untriaged / is_suppressed
+               predicates copied verbatim from reference/core/database.py; the
+               surrounding SQLite machinery is not vendored.
+- _egress.py : the terminal-control regexes and strip_terminal_control copied
+               verbatim from reference/core/llm_gateway.py. The upstream
+               sanitize_egress_text also runs a credential scrubber; Spar performs
+               secret redaction before this point, so only control-sequence stripping
+               is retained.
+
+PyRIT (https://github.com/microsoft/PyRIT, MIT License) is used as an ordinary
+installed dependency and is not vendored.

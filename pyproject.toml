@@ -27,6 +27,9 @@ spar = "spar.cli:main"
 [tool.setuptools.packages.find]
 include = ["spar*"]
 
+[tool.setuptools.package-data]
+"spar.third_party.mantis" = ["LICENSE"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--strict-markers"

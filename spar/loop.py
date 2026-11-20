@@ -15,6 +15,7 @@ import time
 from typing import Any
 import uuid
 
+from . import __version__
 from .aim import build_plan, index_repo, run_recon, write_plan
 from .attacks.benign import run_benign_suite
 from .attacks.held_out import run_held_out
@@ -67,6 +68,7 @@ from .report import (
     emit_report,
     wilson_interval,
 )
+from .sarif_export import write_findings_sarif
 from .target import TargetClient
 
 
@@ -88,6 +90,7 @@ class RunSummary:
     started_at: float
     finished_at: float
     halt_reason: str | None = None
+    sarif_path: Path | None = None
 
 
 @dataclass
@@ -782,6 +785,25 @@ def run_campaign(
                 halt=halt_reason,
             )
 
+            sarif_path: Path | None = None
+            if findings:
+                try:
+                    sarif_path, sarif_count, sarif_skipped = write_findings_sarif(
+                        findings,
+                        plan,
+                        run_dir,
+                        repo_path,
+                        tool_version=__version__,
+                        secrets=secrets_list,
+                    )
+                    ledger.append(
+                        "sarif.written",
+                        {"path": str(sarif_path), "results": int(sarif_count), "skipped": list(sarif_skipped)},
+                        task_id="campaign",
+                    )
+                except Exception as exc:  # SARIF export must never fail a run.
+                    ledger.append("sarif.error", {"error": str(exc)[:200]}, task_id="campaign")
+
             human_review_path = export_human_review_sample(
                 run_dir,
                 ledger,
@@ -836,6 +858,7 @@ def run_campaign(
                 started_at=started_at,
                 finished_at=finished_at,
                 halt_reason=halt_reason,
+                sarif_path=sarif_path,
             )
         finally:
             kill.restore()
