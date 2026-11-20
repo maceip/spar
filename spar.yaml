@@ -1,31 +1,88 @@
-# Spar run configuration.
-# Scope is enforced in deterministic Python hooks (spar/guard/), never in prompts.
-# By default Spar attacks ONLY localhost and hosts explicitly allowlisted here.
+# Spar v1 run configuration.
+# Scope and risk tiers are enforced in deterministic Python hooks (spar/guard.py),
+# never in prompts. By default Spar attacks ONLY localhost and hosts explicitly
+# allowlisted here, with state-changing actions disabled.
 
 target:
-  # base_url is set by `spar run --target ...`; demo mode fills it in automatically.
+  # Override via `spar run --target ...`; `spar demo` uses a localhost ephemeral port.
   base_url: "http://127.0.0.1:8765"
+  contract:
+    auth:
+      header: "Authorization"
+      prefix: "Bearer "
+    chat:
+      method: "POST"
+      path: "/agent/chat"
+      message_field: "message"
+      image_field: "image_b64"
+      session_field: "session_id"
+      reply_field: "reply"
+    invoke:
+      method: "POST"
+      path: "/agent/invoke"
+      tool_field: "tool"
+      args_field: "args"
+    mcp:
+      method: "POST"
+      path: "/mcp/rpc"
+    manifest:
+      method: "GET"
+      path: "/agent/manifest"
+    version:
+      method: "GET"
+      path: "/version"
+    reset:
+      method: "POST"
+      path: "/audit/reset"
+    witnesses:
+      tool_log:
+        method: "GET"
+        path: "/audit/tool-log"
+        events_field: "events"
+      positive_control:
+        method: "POST"
+        path: "/audit/ping"
+        control_field: "control_id"
+      outbox:
+        method: "GET"
+        path: "/users/{account}/outbox"
+        items_field: "emails"
+      refunds:
+        method: "GET"
+        path: "/refunds"
+        items_field: "refunds"
+      memory:
+        method: "GET"
+        path: "/memory"
+        items_field: "passages"
+      shared_docs:
+        method: "POST"
+        path: "/docs/shared"
 
 scope:
   allowlist_hosts:
     - "127.0.0.1"
     - "localhost"
-  # State-changing actions (send_email, issue_refund, ...) require one of:
-  # sandboxed test doubles (demo target qualifies), this flag, or operator approval.
-  allow_risky: true
+  # Safe default: state-changing actions (resets, sending emails, issuing refunds,
+  # writing shared memory) are DISABLED unless explicitly enabled via spar.yaml
+  # or `--allow-risky`.
+  allow_risky: false
+  # Optional Ed25519 signature over scope allowlist for client engagements:
+  # signature: ""
+  # public_key_env: "SPAR_SCOPE_PUBKEY"
 
 accounts:
-  # Synthetic test accounts only. Oracles plant synthetic canaries (SPAR-xxxx)
-  # under these accounts; production user data is never touched.
+  # Secrets by reference only: tokens are read from environment variables at
+  # request time and are never persisted in artifacts or generated tests.
   - name: alice
-    token: "token-alice"
+    token_env: "SPAR_TOKEN_ALICE"
     role: user
   - name: bob
-    token: "token-bob"
+    token_env: "SPAR_TOKEN_BOB"
     role: user
   - name: auditor
-    token: "token-auditor"
-    role: auditor   # read-only access to tool-execution log (oracle witness)
+    token_env: "SPAR_TOKEN_AUDITOR"
+    role: auditor
 
 budget:
   max_usd: 10.0
@@ -34,15 +91,21 @@ budget:
   rate_per_min: 600
 
 trials:
-  n: 20             # k/N empirical success-rate calibration
+  n: 20
+  min_distinct_techniques: 3
 
 llm:
-  # Optional. When unset, Spar runs deterministic scripted attack missions
-  # (fully functional against the bundled demo target and HTTP/API surfaces).
-  # When set, fire workers use the OpenAI-compatible endpoint for adaptive
-  # multi-turn attacks. Every dollar spent is recorded in .spar/attempts.jsonl.
+  # Optional attacker/judge/fixer LLM endpoint (OpenAI-compatible).
   base_url: ""
-  api_key_env: "SPAR_LLM_API_KEY"
+  api_key_env: "OPENAI_API_KEY"
+  model: ""
+  usd_per_1k_input: 0.0
+  usd_per_1k_output: 0.0
+
+critic_llm:
+  # Optional independent critic model (different model family from attacker/judge).
+  base_url: ""
+  api_key_env: "SPAR_CRITIC_API_KEY"
   model: ""
   usd_per_1k_input: 0.0
   usd_per_1k_output: 0.0
