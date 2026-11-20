@@ -851,11 +851,19 @@ def run_campaign(
 
             # Write SARIF only on a conclusive outcome, decided after the integrity audit:
             # REPRODUCED emits the findings, NOT_REPRODUCED emits a zero-result document to
-            # close prior alerts. An INCONCLUSIVE run - halted, unhealthy witnesses, or a
-            # failed integrity audit - writes nothing, even if it produced findings, so an
-            # unvalidated run's artifact can never publish or close a consumer's alerts.
+            # close prior alerts - but only if at least one objective actually ran to a
+            # conclusive result, so a campaign that discovered no objectives (empty plan)
+            # does not emit a clean document that closes a consumer's still-live alerts
+            # without having tested anything. An INCONCLUSIVE run - halted, unhealthy
+            # witnesses, or a failed integrity audit - writes nothing, even with findings.
+            conclusive_objectives = [
+                oo for oo in objective_outcomes
+                if str(oo.get("outcome")) in (Outcome.REPRODUCED.value, Outcome.NOT_REPRODUCED.value)
+            ]
             sarif_path: Path | None = None
-            if overall_outcome in (Outcome.REPRODUCED, Outcome.NOT_REPRODUCED):
+            if overall_outcome == Outcome.REPRODUCED or (
+                overall_outcome == Outcome.NOT_REPRODUCED and conclusive_objectives
+            ):
                 sarif_path = _write_sarif_safe(
                     findings, plan, run_dir, repo_path, secrets_list, ledger, "campaign"
                 )
@@ -1462,9 +1470,19 @@ def run_replay(
             # reproduced finding into not_reproduced after a verified fix. Regenerate SARIF
             # from the updated findings so a hardened finding stops being published as live.
             # Gate on the conclusive outcome (after the integrity audit): REPRODUCED or
-            # NOT_REPRODUCED emits; an INCONCLUSIVE replay writes nothing.
+            # NOT_REPRODUCED emits; an INCONCLUSIVE replay writes nothing AND removes any
+            # SARIF the campaign left in this run dir, so a caller cannot upload stale
+            # pre-replay results that this replay could not re-validate.
             if overall_outcome in (Outcome.REPRODUCED, Outcome.NOT_REPRODUCED):
                 _write_sarif_safe(all_findings, plan, rd, resolved_repo, secrets_list, ledger, "replay")
+            else:
+                stale = rd / "findings.sarif"
+                try:
+                    if stale.exists():
+                        stale.unlink()
+                        ledger.append("sarif.removed", {"path": str(stale), "reason": "inconclusive_replay"}, task_id="replay")
+                except OSError as exc:
+                    ledger.append("sarif.error", {"error": str(exc)[:200], "stage": "replay"}, task_id="replay")
 
             return ReplaySummary(
                 run_dir=rd,

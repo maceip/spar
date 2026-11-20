@@ -103,6 +103,30 @@ def test_sarif_skips_symbol_at_seq_surface_as_location():
     assert _location_for(["bare/path.py:7"]) == ("bare/path.py", 7)  # defensive: no symbol@ prefix
 
 
+def test_sarif_anchors_to_exercised_surface():
+    from spar.sarif_export import _location_for
+
+    surfaces = ["list_files@spar/demo_target/app.py:100", "send_email@spar/demo_target/app.py:200"]
+    # With no hint, falls back to the first surface in plan order.
+    assert _location_for(surfaces) == ("spar/demo_target/app.py", 100)
+    # When the finding exercised send_email, anchor to that surface instead.
+    assert _location_for(surfaces, frozenset({"send_email"})) == ("spar/demo_target/app.py", 200)
+
+
+def test_sarif_fingerprint_survives_file_move(tmp_path):
+    # The fingerprint must NOT include the anchor path, so a rename/move of the source
+    # keeps the same identity (the whole point of a stable fingerprint).
+    f = Finding(id="find-01", objective="x", objective_id="obj-01", technique="tool_misuse",
+                severity="HIGH", k=5, n=20, oracle="tool_log", outcome="reproduced")
+    plan_a = {"run_id": "r", "objectives": [{"id": "obj-01", "surface_ids": ["send@old/path.py:10"]}]}
+    plan_b = {"run_id": "r", "objectives": [{"id": "obj-01", "surface_ids": ["send@new/location.py:42"]}]}
+    pa, _, _ = write_findings_sarif([f], plan_a, tmp_path / "a", repo=".")
+    pb, _, _ = write_findings_sarif([f], plan_b, tmp_path / "b", repo=".")
+    fa = json.loads(pa.read_text())["runs"][0]["results"][0]["partialFingerprints"]
+    fb = json.loads(pb.read_text())["runs"][0]["results"][0]["partialFingerprints"]
+    assert fa == fb
+
+
 def test_sarif_fingerprint_is_stable_across_renumbered_ids(tmp_path):
     # The run-local finding id renumbers across runs (assigned from len(findings)); the
     # fingerprint must not, so the same technique+objective keeps the same identity.

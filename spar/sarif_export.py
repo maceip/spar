@@ -94,25 +94,85 @@ def _rebase_to_root(filepath: str, repo: Path | str | None) -> str:
     return filepath
 
 
-def _location_for(surface_ids: list[str]) -> tuple[str, int] | None:
-    """First code surface -> (file, line); ignores ledger (``seq:``) surfaces.
+def _parse_surface(sid: str) -> tuple[str, str, int] | None:
+    """``"<symbol>@<file>:<line>"`` -> (symbol, file, line); None for ledger/invalid.
 
     ``build_plan`` formats each surface id as ``"<symbol>@<loc>"`` where ``<loc>`` is
-    ``"<file>:<line>"`` for a code surface or ``"seq:<N>"`` for a ledger surface. The
-    symbol prefix is stripped before parsing, and ledger surfaces are skipped so a
-    black-box finding falls back to the report rather than minting a bogus path.
+    ``"<file>:<line>"`` for a code surface or ``"seq:<N>"`` for a ledger surface.
     """
-    for sid in surface_ids:
-        if not sid:
-            continue
-        loc = sid.split("@", 1)[1] if "@" in sid else sid
-        if loc.startswith("seq:"):
-            continue
-        # A code surface is "<relative/path>:<line>"; the path may itself hold no colon.
-        head, sep, tail = loc.rpartition(":")
-        if sep and head and tail.isdigit():
-            return head, int(tail)
+    if not sid:
+        return None
+    symbol, _, rest = sid.partition("@")
+    loc = rest if rest else symbol
+    if loc.startswith("seq:"):
+        return None
+    head, sep, tail = loc.rpartition(":")  # the path itself may hold no colon
+    if sep and head and tail.isdigit():
+        return (symbol if rest else ""), head, int(tail)
     return None
+
+
+def _location_for(surface_ids: list[str], prefer_symbols: frozenset[str] = frozenset()) -> tuple[str, int] | None:
+    """Pick the code surface to anchor to: the one whose symbol the finding exercised.
+
+    An objective may carry several grounded surfaces (``_surfaces_for`` collects every
+    claim matching broad hints like ``email``/``tool``/``chat``). When the finding's
+    evidence names the tool/symbol it actually drove, anchor to that surface so the
+    SARIF line is the handler really exercised, not merely the first in plan order.
+    Falls back to the first code surface, then to None (black-box / ledger-only).
+    """
+    parsed = [p for p in (_parse_surface(sid) for sid in surface_ids) if p is not None]
+    if not parsed:
+        return None
+    if prefer_symbols:
+        for symbol, file, line in parsed:
+            sym = symbol.rsplit(".", 1)[-1].lower()
+            if sym and sym in prefer_symbols:
+                return file, line
+    _, file, line = parsed[0]
+    return file, line
+
+
+def _report_rel_path(run_dir: Path | str) -> str:
+    """Checkout-root-relative path of this run's ``report.md`` for black-box anchoring.
+
+    ``emit_report`` writes the report at ``<run_dir>/report.md`` (by default under
+    ``.spar/runs/<id>/``), but SARIF relative URIs resolve from the checkout root, so a
+    bare ``report.md`` points a consumer at a file that was never generated. Resolve the
+    report against the VCS/CWD root when representable; otherwise fall back to the bare
+    name rather than emit an escaping path.
+    """
+    try:
+        report_abs = (Path(run_dir) / "report.md").resolve()
+        root = _vcs_root(Path.cwd()) or Path.cwd()
+        rel = os.path.relpath(report_abs, root)
+        if not rel.startswith("..") and not os.path.isabs(rel):
+            return rel.replace(os.sep, "/")
+    except (OSError, ValueError):
+        pass
+    return "report.md"
+
+
+def _exercised_symbols(finding: Any) -> frozenset[str]:
+    """Lower-case tool/symbol names the finding's evidence shows it actually drove.
+
+    Used to anchor SARIF to the handler really exercised when an objective has several
+    grounded surfaces. Drawn from the recorded PoC steps and evidence, not from guesses.
+    """
+    out: set[str] = set()
+    for step in _fget(finding, "steps") or []:
+        if isinstance(step, dict):
+            for key in ("tool", "action", "symbol"):
+                val = step.get(key)
+                if isinstance(val, str) and val:
+                    out.add(val.rsplit(".", 1)[-1].lower())
+    ev = _fget(finding, "evidence") or {}
+    if isinstance(ev, dict):
+        for key in ("tool", "read_tool", "write_tool", "symbol", "action"):
+            val = ev.get(key)
+            if isinstance(val, str) and val:
+                out.add(val.rsplit(".", 1)[-1].lower())
+    return frozenset(out)
 
 
 def _finding_to_dict(
@@ -153,7 +213,7 @@ def _finding_to_dict(
     else:
         status = "confirmed"
 
-    loc = _location_for(surfaces_by_obj.get(oid, []))
+    loc = _location_for(surfaces_by_obj.get(oid, []), _exercised_symbols(finding))
     if loc is not None:
         filepath, line = loc
         filepath = _rebase_to_root(filepath, repo)
@@ -161,11 +221,12 @@ def _finding_to_dict(
     else:
         filepath, line_numbers = report_rel, [1]
 
-    # Fingerprint from stable semantic identity, NOT the run-local finding id (which is
-    # assigned from len(findings) and renumbers when an earlier objective drops out).
-    # technique + objective_id is fixed by the deterministic plan, so a consumer
-    # correlates the same vulnerability across runs instead of closing and reopening it.
-    signature = hashlib.sha1(f"{technique}|{oid}|{filepath}".encode("utf-8")).hexdigest()[:16]
+    # Fingerprint from a durable semantic identity: technique + objective_id, which is
+    # fixed by the deterministic plan (one finding per objective) and, unlike the
+    # run-local finding id or the anchor filepath, survives both renumbering and a
+    # rename/move of the vulnerable source, so a consumer correlates the same
+    # vulnerability across runs instead of closing and reopening its alert.
+    signature = hashlib.sha1(f"{technique}|{oid}".encode("utf-8")).hexdigest()[:16]
 
     description = (
         f"{objective} Proven by oracle `{oracle}` at {k}/{n} trials "
@@ -231,7 +292,7 @@ def write_findings_sarif(
     """Write ``run_dir/findings.sarif``. Returns (path, result_count, skipped_reasons)."""
     secret_list = tuple(secrets or ())
     surfaces_by_obj = _objective_surfaces(plan)
-    report_rel = "report.md"
+    report_rel = _report_rel_path(run_dir)
     finding_dicts = [
         _finding_to_dict(f, surfaces_by_obj, repo, report_rel, secret_list) for f in findings
     ]
