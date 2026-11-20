@@ -881,6 +881,17 @@ def run_campaign(
                 sarif_path = _write_sarif_safe(
                     findings, plan, run_dir, repo_path, secrets_list, ledger, "campaign"
                 )
+            else:
+                # A reused run_id reopens an existing run dir without clearing it; an
+                # incomplete campaign must not leave a prior run's findings.sarif behind to
+                # be uploaded as though it described this run.
+                stale = run_dir / "findings.sarif"
+                try:
+                    if stale.exists():
+                        stale.unlink()
+                        ledger.append("sarif.removed", {"path": str(stale), "reason": "incomplete_campaign"}, task_id="campaign")
+                except OSError as exc:
+                    ledger.append("sarif.error", {"error": str(exc)[:200], "stage": "campaign"}, task_id="campaign")
 
             safe_write_text(root_path / "latest", f"{policy.run_id}\n", secrets=secrets_list)
             finished_at = time.time()
@@ -1440,6 +1451,30 @@ def run_replay(
                     },
                     task_id="replay",
                 )
+
+            # Reconcile finding state with the regression suite before anything is emitted.
+            # The fix verifier can mark a finding hardened while its generated regression
+            # test still reproduces; Spar's own emitted test is the proof, so when it fails
+            # a "hardened" finding is demoted to regressed/reproduced. This keeps the report
+            # and the SARIF consistent and stops a still-reproducing vulnerability from
+            # being suppressed and its alert closed.
+            if pytest_status == "reproduced":
+                for f_obj in all_findings:
+                    reatt = getattr(f_obj, "reattack", None)
+                    is_hardened = getattr(f_obj, "label", "") == "hardened" or (
+                        isinstance(reatt, dict) and reatt.get("outcome") == Outcome.NOT_REPRODUCED.value
+                    )
+                    if is_hardened:
+                        f_obj.label = "regressed"
+                        f_obj.fix_status = "failed"
+                        if isinstance(reatt, dict):
+                            reatt["outcome"] = Outcome.REPRODUCED.value
+                            reatt["label"] = "regressed"
+                        ledger.append(
+                            "replay.reconciled",
+                            {"finding_id": getattr(f_obj, "id", ""), "reason": "regression_test_reproduced"},
+                            task_id="replay",
+                        )
 
             report_path = emit_report(
                 all_findings,
