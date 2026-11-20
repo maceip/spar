@@ -71,10 +71,10 @@
         inset: 0;
         pointer-events: none;
         background: radial-gradient(
-          ellipse 40% 34% at 50% 50%,
-          rgba(0, 0, 0, 0.92) 0%,
-          rgba(0, 0, 0, 0.62) 55%,
-          rgba(0, 0, 0, 0.08) 100%
+          ellipse 34% 26% at 50% 50%,
+          rgba(0, 0, 0, 0.55) 0%,
+          rgba(0, 0, 0, 0.22) 55%,
+          transparent 100%
         );
       }
 
@@ -110,7 +110,6 @@
 
       .hero-center {
         position: relative;
-        z-index: 2;
         text-align: center;
         padding: 24px;
         max-width: 600px;
@@ -122,7 +121,9 @@
         width: min(260px, 68vw);
         height: auto;
         margin: 0 auto 20px;
-        border-radius: 6px;
+        background: transparent;
+        mix-blend-mode: screen;
+        filter: brightness(0.95) contrast(1.08);
       }
 
       .hero-title {
