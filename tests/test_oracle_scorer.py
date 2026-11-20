@@ -88,3 +88,37 @@ def test_adversarial_configured_gating():
     assert adversarial_configured(p) is False  # keyless demo / CI -> deterministic fallback
     p.llm = LLMProviderConfig(base_url="https://api.openai.com/v1", model="gpt-4o-mini", api_key_env="OPENAI_API_KEY")
     assert adversarial_configured(p) is True  # attacker LLM configured -> PyRIT executor
+
+
+def test_guarded_adversarial_target_routes_through_guard():
+    """The attacker LLM must call GuardedHTTPClient.llm_chat, never a direct provider."""
+    import asyncio
+    from pyrit.models import Message, MessagePiece
+    from spar.attacks.pyrit_executor import GuardedAdversarialTarget
+    from spar.policy import LLMProviderConfig
+
+    calls = {}
+
+    class FakeHTTP:
+        def llm_chat(self, messages, *, provider, max_tokens=800, temperature=0.7, timeout=60.0):
+            calls["messages"] = messages
+            calls["provider"] = provider
+            return "next attacker prompt", {"usage": {}}
+
+    class FakeClient:
+        base_url = "http://127.0.0.1"
+        http = FakeHTTP()
+
+    llm = LLMProviderConfig(base_url="https://api.openai.com/v1", model="gpt-4o-mini", api_key_env="OPENAI_API_KEY")
+    tgt = GuardedAdversarialTarget(target_client=FakeClient(), llm_cfg=llm)
+    conv = [
+        Message(message_pieces=[MessagePiece(role="system", original_value="you are a red teamer",
+                converted_value="you are a red teamer", original_value_data_type="text", converted_value_data_type="text")]),
+        Message(message_pieces=[MessagePiece(role="user", original_value="target said no",
+                converted_value="target said no", original_value_data_type="text", converted_value_data_type="text")]),
+    ]
+    out = asyncio.run(tgt._send_prompt_to_target_async(normalized_conversation=conv))
+    # It went through the guarded client, forwarding the full conversation with roles.
+    assert calls["provider"] is llm
+    assert [m["role"] for m in calls["messages"]] == ["system", "user"]
+    assert out[0].message_pieces[-1].converted_value == "next attacker prompt"

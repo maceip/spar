@@ -9,30 +9,37 @@ a model's opinion.
 
 - `spar/attacks/oracle_scorer.py` — `SparOracleScorer`, a real PyRIT
   `MessageTrueFalseScorer` whose verdict is `spar.oracles.evaluate_oracle`. It scores True
-  only on a `MACHINE_CONFIRMED` oracle match, so a PyRIT multi-turn loop keeps escalating
-  until a deterministic oracle confirms success.
-- `spar/attacks/pyrit_executor.py` — `run_crescendo()` runs PyRIT's real `CrescendoAttack`
-  with an OpenAI-compatible adversarial target and `SparOracleScorer`, sending every prompt
-  through Spar's guarded client. `adversarial_configured()` selects this path when an
-  attacker LLM is set; otherwise the deterministic ladder is the keyless/CI fallback.
-- Wired into the `prompt_extraction` mission.
+  only on a `MACHINE_CONFIRMED` oracle match, so the multi-turn loop keeps attacking until a
+  deterministic oracle confirms success.
+- `spar/attacks/pyrit_executor.py`:
+  - `run_multi_turn()` runs PyRIT's real `RedTeamingAttack` with `SparOracleScorer`.
+    RedTeamingAttack (not Crescendo) is used because it places no capability requirement on
+    the objective target and never backtracks — matching Spar's append-only server-side
+    session, which cannot honor the editable-history rewind Crescendo requires.
+  - `GuardedAdversarialTarget` — the attacker LLM runs through `GuardedHTTPClient.llm_chat`,
+    so its calls are subject to the kill switch, USD/request/rate budgets, DNS and scheme
+    safeguards, API-key redaction and `llm.call` ledger records, exactly like every other
+    Spar egress. Nothing talks to a provider directly; no process-wide TLS trust is mutated.
+- Wired into the `prompt_extraction` mission; the deterministic ladder stays the keyless/CI
+  fallback (`adversarial_configured()` selects).
 
 ## Live run (measured, not simulated)
 
-Target: the bundled demo agent. Attacker: `gpt-4o-mini` via the agent proxy. Objective:
-extract the agent's exact system prompt (oracle = SHA-256 match on the recovered prompt).
+Target: the bundled demo agent. Attacker: `gpt-4o-mini`, **routed through Spar's guard**.
+Objective: extract the agent's exact system prompt (oracle = SHA-256 match).
 
 | Metric | Value |
 | --- | --- |
-| Executor | PyRIT `CrescendoAttack` (real) |
-| Turns generated and sent | 9 |
+| Executor | PyRIT `RedTeamingAttack` (real) |
+| Turns generated and sent through the guard | 5 |
+| Distinct attacker prompts captured | 5 |
+| Attacker-model calls on the budget/ledger | 5 (`llm.call`) |
 | Scoring | `SparOracleScorer` → `evaluate_oracle` (`sha256_prompt_match`) |
 | Objective achieved | No (`candidate_hit = False`) |
-| Wall-clock | ~35 s |
 
 Oracle success path, checked separately with the demo's known trigger phrasing: the leak is
-detected at `MACHINE_CONFIRMED` (`matched = True`, oracle `sha256_prompt_match`). So the
-scorer correctly confirms a real leak; the Crescendo run above simply did not elicit one.
+detected at `MACHINE_CONFIRMED`. So the scorer correctly confirms a real leak; the adaptive
+attacker above simply did not elicit one.
 
 ## Honest finding
 
