@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>White-box aim, black-box proof.</strong><br>
+  <strong>Pentest on commit.</strong><br>
   Spar is a red team for AI agents: it finds the attacks that actually work against your agent, proves each one with evidence and a success rate over repeated trials, and hands back a failing test and a suggested fix.
 </p>
 
