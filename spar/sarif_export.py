@@ -59,12 +59,21 @@ def _objective_surfaces(plan: dict[str, Any]) -> dict[str, list[str]]:
 
 
 def _location_for(surface_ids: list[str]) -> tuple[str, int] | None:
-    """First ``file:line`` surface -> (file, line); ignores ``seq:`` ledger surfaces."""
+    """First code surface -> (file, line); ignores ledger (``seq:``) surfaces.
+
+    ``build_plan`` formats each surface id as ``"<symbol>@<loc>"`` where ``<loc>`` is
+    ``"<file>:<line>"`` for a code surface or ``"seq:<N>"`` for a ledger surface. The
+    symbol prefix is stripped before parsing, and ledger surfaces are skipped so a
+    black-box finding falls back to the report rather than minting a bogus path.
+    """
     for sid in surface_ids:
-        if not sid or sid.startswith("seq:"):
+        if not sid:
+            continue
+        loc = sid.split("@", 1)[1] if "@" in sid else sid
+        if loc.startswith("seq:"):
             continue
         # A code surface is "<relative/path>:<line>"; the path may itself hold no colon.
-        head, sep, tail = sid.rpartition(":")
+        head, sep, tail = loc.rpartition(":")
         if sep and head and tail.isdigit():
             return head, int(tail)
     return None
@@ -87,6 +96,26 @@ def _finding_to_dict(
     ci_hi = float(_fget(finding, "wilson_ci_high", 0.0) or 0.0)
     oracle = str(_fget(finding, "oracle") or "")
     outcome = str(_fget(finding, "outcome") or "reproduced")
+    label = str(_fget(finding, "label") or "new")
+    fix_status = str(_fget(finding, "fix_status") or "")
+    reattack = _fget(finding, "reattack") or {}
+    reattack_outcome = str(reattack.get("outcome") or "") if isinstance(reattack, dict) else ""
+
+    # A finding a verified fix has hardened (replay flips it to not_reproduced) must not
+    # keep publishing as a live alert. Map it to a Mantis-suppressed status so the
+    # vendored builder drops it and code-scanning consumers close the alert; keep a
+    # genuinely reproduced finding live.
+    hardened = (
+        label == "hardened"
+        or reattack_outcome == "not_reproduced"
+        or (fix_status == "verified" and outcome != "reproduced")
+    )
+    if hardened:
+        status = "mitigated"
+    elif outcome == "reproduced":
+        status = "reproduced"
+    else:
+        status = "confirmed"
 
     loc = _location_for(surfaces_by_obj.get(oid, []))
     if loc is not None:
@@ -104,11 +133,14 @@ def _finding_to_dict(
         "title": f"{technique}: {objective}".strip().rstrip(":"),
         "description": description,
         "severity": severity,
-        "status": "reproduced" if outcome == "reproduced" else "confirmed",
+        "status": status,
         "cwe": _TECHNIQUE_CWE.get(technique, ""),
         "filepath": filepath,
         "line_numbers": line_numbers,
-        "mantis_fingerprint": str(_fget(finding, "id") or oid or technique),
+        # `signature` is a fingerprint key the vendored builder recognises (it emits
+        # partialFingerprints from `lineage_id`/`signature`), so a code-scanning
+        # consumer can correlate the same finding across runs when its line moves.
+        "signature": str(_fget(finding, "id") or oid or technique),
     }
 
 
@@ -131,6 +163,17 @@ def _relabel_driver(document: dict[str, Any]) -> None:
             for key in list(props):
                 if key.startswith("mantis-") or key.startswith("mantis/"):
                     props[key.replace("mantis", "spar", 1)] = props.pop(key)
+            # The builder appends a hard-coded "[Mantis <note>. Triage status: ...]"
+            # verification note to each message; relabel it so the verdict is not
+            # misattributed to Mantis under the Spar driver.
+            msg = result.get("message", {})
+            if isinstance(msg.get("text"), str):
+                msg["text"] = msg["text"].replace("[Mantis ", "[Spar ")
+            fps = result.get("partialFingerprints")
+            if isinstance(fps, dict):
+                result["partialFingerprints"] = {
+                    k.replace("mantis/", "spar/", 1): v for k, v in fps.items()
+                }
 
 
 def write_findings_sarif(

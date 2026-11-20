@@ -104,6 +104,36 @@ class ReplaySummary:
     report_path: Path
 
 
+def _write_sarif_safe(
+    findings: list[Any],
+    plan: dict[str, Any],
+    run_dir: Path,
+    repo: Path | None,
+    secrets_list: list[str],
+    ledger: Ledger,
+    stage: str,
+) -> Path | None:
+    """Write run_dir/findings.sarif from the current findings; never fail the run.
+
+    Always writes, including for a clean run with no findings: a zero-result SARIF is
+    how a code-scanning consumer reconciles and closes alerts from an earlier run, so
+    a clean campaign must be distinguishable from one that never scanned.
+    """
+    try:
+        sarif_path, sarif_count, sarif_skipped = write_findings_sarif(
+            findings, plan, run_dir, repo, tool_version=__version__, secrets=secrets_list
+        )
+        ledger.append(
+            "sarif.written",
+            {"path": str(sarif_path), "results": int(sarif_count), "skipped": list(sarif_skipped), "stage": stage},
+            task_id=stage,
+        )
+        return sarif_path
+    except Exception as exc:  # SARIF export must never fail a run.
+        ledger.append("sarif.error", {"error": str(exc)[:200], "stage": stage}, task_id=stage)
+        return None
+
+
 def _classify_pytest_result(returncode: int, stderr: str, stdout: str) -> str:
     """Classify a pytest subprocess outcome into passed / reproduced / inconclusive."""
     combined = f"{stderr or ''}\n{stdout or ''}".lower()
@@ -785,24 +815,9 @@ def run_campaign(
                 halt=halt_reason,
             )
 
-            sarif_path: Path | None = None
-            if findings:
-                try:
-                    sarif_path, sarif_count, sarif_skipped = write_findings_sarif(
-                        findings,
-                        plan,
-                        run_dir,
-                        repo_path,
-                        tool_version=__version__,
-                        secrets=secrets_list,
-                    )
-                    ledger.append(
-                        "sarif.written",
-                        {"path": str(sarif_path), "results": int(sarif_count), "skipped": list(sarif_skipped)},
-                        task_id="campaign",
-                    )
-                except Exception as exc:  # SARIF export must never fail a run.
-                    ledger.append("sarif.error", {"error": str(exc)[:200]}, task_id="campaign")
+            sarif_path = _write_sarif_safe(
+                findings, plan, run_dir, repo_path, secrets_list, ledger, "campaign"
+            )
 
             human_review_path = export_human_review_sample(
                 run_dir,
@@ -1410,6 +1425,11 @@ def run_replay(
                 ledger,
                 secrets=secrets_list,
             )
+            # Replay mutates finding state (fix_status / label / reattack) and can turn a
+            # reproduced finding into not_reproduced after a verified fix. Regenerate the
+            # SARIF from the updated findings so the artifact never keeps publishing a
+            # vulnerability as live that this run has just marked hardened.
+            _write_sarif_safe(all_findings, plan, rd, resolved_repo, secrets_list, ledger, "replay")
             report_text = report_path.read_text(encoding="utf-8")
             integrity = audit_run_integrity(
                 rd,

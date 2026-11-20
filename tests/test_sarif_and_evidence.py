@@ -54,9 +54,11 @@ def _findings():
 
 
 def _plan():
+    # Surface ids use the real build_plan format: "<symbol>@<file>:<line>" or
+    # "<symbol>@seq:<N>" for a ledger surface.
     return {"run_id": "run-test", "objectives": [
-        {"id": "obj-01", "surface_ids": ["spar/demo_target/app.py:1049", "seq:12"]},
-        {"id": "obj-02", "surface_ids": ["seq:40"]},
+        {"id": "obj-01", "surface_ids": ["send_email@spar/demo_target/app.py:1049", "capability_probe@seq:12"]},
+        {"id": "obj-02", "surface_ids": ["prompt_probe@seq:40"]},
     ]}
 
 
@@ -66,23 +68,63 @@ def test_sarif_export_anchors_and_relabels(tmp_path):
     doc = json.loads(path.read_text())
     run = doc["runs"][0]
 
-    # Driver is Spar, not Mantis, anywhere in the tool block.
+    # Driver is Spar, not Mantis, anywhere in the tool block, and no result message
+    # still attributes its verdict to Mantis.
     assert run["tool"]["driver"]["name"] == "Spar"
-    assert "Mantis" not in json.dumps(run["tool"]["driver"])
+    assert "Mantis" not in json.dumps(run)
 
     # Rules group by real CWE classes.
     assert {r["id"] for r in run["tool"]["driver"]["rules"]} == {"CWE-285", "CWE-200"}
 
     by_rule = {r["ruleId"]: r for r in run["results"]}
-    # Grounded finding anchors to the code line; black-box finding anchors to the report.
+    # The symbol@file:line surface is parsed to a real repo path, not "send_email@...".
     loc_285 = by_rule["CWE-285"]["locations"][0]["physicalLocation"]
     assert loc_285["artifactLocation"]["uri"] == "spar/demo_target/app.py"
     assert loc_285["region"]["startLine"] == 1049
+    # A finding whose only surface is a symbol@seq ledger ref falls back to the report.
     loc_200 = by_rule["CWE-200"]["locations"][0]["physicalLocation"]
     assert loc_200["artifactLocation"]["uri"] == "report.md"
 
-    # No mantis-prefixed result properties leak through.
+    # The finding id is emitted as a fingerprint under a spar/ key for cross-run identity.
+    fps = by_rule["CWE-285"].get("partialFingerprints") or {}
+    assert any(k.startswith("spar/") for k in fps) and "find-01" in fps.values()
+
+    # No mantis-prefixed result properties or fingerprint keys leak through.
     assert not any(k.startswith("mantis") for res in run["results"] for k in res.get("properties", {}))
+    assert not any(k.startswith("mantis") for res in run["results"] for k in (res.get("partialFingerprints") or {}))
+
+
+def test_sarif_skips_symbol_at_seq_surface_as_location():
+    from spar.sarif_export import _location_for
+
+    assert _location_for(["send_email@spar/demo_target/app.py:1049"]) == ("spar/demo_target/app.py", 1049)
+    assert _location_for(["capability_probe@seq:12"]) is None
+    assert _location_for(["bare/path.py:7"]) == ("bare/path.py", 7)  # defensive: no symbol@ prefix
+
+
+def test_sarif_empty_for_clean_run(tmp_path):
+    path, count, skipped = write_findings_sarif([], {"run_id": "r", "objectives": []}, tmp_path, repo=".")
+    assert count == 0 and skipped == []
+    doc = json.loads(path.read_text())
+    # A valid, zero-result SARIF run so consumers can close prior alerts on a clean scan.
+    assert doc["runs"][0]["results"] == []
+    assert doc["runs"][0]["tool"]["driver"]["name"] == "Spar"
+
+
+def test_sarif_suppresses_hardened_finding(tmp_path):
+    hardened = Finding(id="find-hard", objective="Leak invoice", objective_id="obj-01",
+                       technique="tool_misuse", severity="HIGH", k=0, n=20, oracle="tool_log",
+                       outcome="not_reproduced", label="hardened", fix_status="verified")
+    live = _findings()[1]  # a still-reproduced finding
+    plan = {"run_id": "r", "objectives": [
+        {"id": "obj-01", "surface_ids": ["send_email@spar/demo_target/app.py:1049"]},
+        {"id": "obj-02", "surface_ids": ["p@seq:40"]},
+    ]}
+    path, count, _ = write_findings_sarif([hardened, live], plan, tmp_path, repo=".")
+    doc = json.loads(path.read_text())
+    # The hardened finding is dropped (Mantis suppresses "mitigated"); only the live one remains.
+    assert count == 1
+    assert doc["runs"][0]["results"][0]["ruleId"] == "CWE-200"
 
 
 def test_sarif_export_redacts_secrets(tmp_path):
