@@ -15,6 +15,7 @@ import time
 from typing import Any
 import uuid
 
+from . import __version__
 from .aim import build_plan, index_repo, run_recon, write_plan
 from .attacks.benign import run_benign_suite
 from .attacks.held_out import run_held_out
@@ -67,6 +68,7 @@ from .report import (
     emit_report,
     wilson_interval,
 )
+from .sarif_export import write_findings_sarif
 from .target import TargetClient
 
 
@@ -88,6 +90,7 @@ class RunSummary:
     started_at: float
     finished_at: float
     halt_reason: str | None = None
+    sarif_path: Path | None = None
 
 
 @dataclass
@@ -99,6 +102,44 @@ class ReplaySummary:
     pytest_returncode: int | None
     integrity: IntegrityReport
     report_path: Path
+
+
+def _write_sarif_safe(
+    findings: list[Any],
+    plan: dict[str, Any],
+    run_dir: Path,
+    repo: Path | None,
+    secrets_list: list[str],
+    ledger: Ledger,
+    stage: str,
+) -> Path | None:
+    """Write run_dir/findings.sarif from the current findings; never fail the run.
+
+    Always writes, including for a clean run with no findings: a zero-result SARIF is
+    how a code-scanning consumer reconciles and closes alerts from an earlier run, so
+    a clean campaign must be distinguishable from one that never scanned.
+    """
+    try:
+        sarif_path, sarif_count, sarif_skipped = write_findings_sarif(
+            findings, plan, run_dir, repo, tool_version=__version__, secrets=secrets_list
+        )
+        ledger.append(
+            "sarif.written",
+            {"path": str(sarif_path), "results": int(sarif_count), "skipped": list(sarif_skipped), "stage": stage},
+            task_id=stage,
+        )
+        return sarif_path
+    except Exception as exc:  # SARIF export must never fail a run.
+        # A failed regeneration must not leave a prior (e.g. pre-replay) artifact in place
+        # for a caller to upload as if current; remove it on the failure path.
+        try:
+            stale = Path(run_dir) / "findings.sarif"
+            if stale.exists():
+                stale.unlink()
+        except OSError:
+            pass
+        ledger.append("sarif.error", {"error": str(exc)[:200], "stage": stage}, task_id=stage)
+        return None
 
 
 def _classify_pytest_result(returncode: int, stderr: str, stdout: str) -> str:
@@ -816,6 +857,43 @@ def run_campaign(
             if not integrity.passed:
                 overall_outcome = Outcome.INCONCLUSIVE
 
+            # Write SARIF only for a COMPLETE campaign, decided after the integrity audit.
+            # A SARIF upload is authoritative for the whole tool: a consumer closes any
+            # prior alert the document omits. So emit only when the run did not halt and
+            # every planned objective reached a conclusive (reproduced/not_reproduced)
+            # outcome - never for a partial run (halted, unhealthy witness, or an
+            # inconclusive objective), even if earlier objectives produced real findings,
+            # which still live in report.md and findings/. A complete clean run emits a
+            # zero-result document to close prior alerts; a complete run with findings
+            # emits them.
+            concluded = sum(
+                1 for oo in objective_outcomes
+                if str(oo.get("outcome")) in (Outcome.REPRODUCED.value, Outcome.NOT_REPRODUCED.value)
+            )
+            planned_count = len(plan.get("objectives") or [])  # from plan: defined on every branch
+            campaign_complete = (
+                halt_reason is None
+                and planned_count > 0
+                and concluded == planned_count
+                and overall_outcome in (Outcome.REPRODUCED, Outcome.NOT_REPRODUCED)
+            )
+            sarif_path: Path | None = None
+            if campaign_complete:
+                sarif_path = _write_sarif_safe(
+                    findings, plan, run_dir, repo_path, secrets_list, ledger, "campaign"
+                )
+            else:
+                # A reused run_id reopens an existing run dir without clearing it; an
+                # incomplete campaign must not leave a prior run's findings.sarif behind to
+                # be uploaded as though it described this run.
+                stale = run_dir / "findings.sarif"
+                try:
+                    if stale.exists():
+                        stale.unlink()
+                        ledger.append("sarif.removed", {"path": str(stale), "reason": "incomplete_campaign"}, task_id="campaign")
+                except OSError as exc:
+                    ledger.append("sarif.error", {"error": str(exc)[:200], "stage": "campaign"}, task_id="campaign")
+
             safe_write_text(root_path / "latest", f"{policy.run_id}\n", secrets=secrets_list)
             finished_at = time.time()
 
@@ -836,6 +914,7 @@ def run_campaign(
                 started_at=started_at,
                 finished_at=finished_at,
                 halt_reason=halt_reason,
+                sarif_path=sarif_path,
             )
         finally:
             kill.restore()
@@ -1374,6 +1453,43 @@ def run_replay(
                     task_id="replay",
                 )
 
+            # Reconcile finding state with the regression suite before anything is emitted,
+            # but only when the failure can be attributed to a specific finding. A filtered
+            # replay runs pytest for one finding_id, so a reproduced result is that finding's:
+            # demote it from hardened to regressed/reproduced so a still-reproducing
+            # vulnerability is not suppressed and its alert closed. In an UNfiltered replay
+            # the aggregate pytest result cannot say which finding reproduced, so demoting
+            # every hardened finding would reopen alerts for fixes that still hold; there we
+            # trust the per-finding fix-verifier verdict instead. The reconciled record is
+            # persisted so a later replay does not reload stale hardened state from disk.
+            if pytest_status == "reproduced" and finding_id:
+                for fp_rec, raw_rec, f_obj in loaded_records:
+                    if f_obj.id != finding_id:
+                        continue
+                    reatt = getattr(f_obj, "reattack", None)
+                    is_hardened = f_obj.label == "hardened" or (
+                        isinstance(reatt, dict) and reatt.get("outcome") == Outcome.NOT_REPRODUCED.value
+                    )
+                    if is_hardened:
+                        f_obj.label = "regressed"
+                        f_obj.fix_status = "failed"
+                        if isinstance(reatt, dict):
+                            reatt["outcome"] = Outcome.REPRODUCED.value
+                            reatt["label"] = "regressed"
+                        try:
+                            safe_write_text(
+                                fp_rec,
+                                json.dumps({**raw_rec, **f_obj.to_dict()}, indent=2, default=str) + "\n",
+                                secrets=secrets_list,
+                            )
+                        except OSError as exc:
+                            ledger.append("replay.error", {"error": str(exc)[:200], "stage": "reconcile"}, task_id="replay")
+                        ledger.append(
+                            "replay.reconciled",
+                            {"finding_id": finding_id, "reason": "regression_test_reproduced"},
+                            task_id="replay",
+                        )
+
             report_path = emit_report(
                 all_findings,
                 rejected,
@@ -1412,6 +1528,24 @@ def run_replay(
                 overall_outcome = Outcome.REPRODUCED
             else:
                 overall_outcome = Outcome.NOT_REPRODUCED
+
+            # Replay mutates finding state (fix_status / label / reattack) and can turn a
+            # reproduced finding into not_reproduced after a verified fix. Regenerate SARIF
+            # from the updated findings so a hardened finding stops being published as live.
+            # Gate on the conclusive outcome (after the integrity audit): REPRODUCED or
+            # NOT_REPRODUCED emits; an INCONCLUSIVE replay writes nothing AND removes any
+            # SARIF the campaign left in this run dir, so a caller cannot upload stale
+            # pre-replay results that this replay could not re-validate.
+            if overall_outcome in (Outcome.REPRODUCED, Outcome.NOT_REPRODUCED):
+                _write_sarif_safe(all_findings, plan, rd, resolved_repo, secrets_list, ledger, "replay")
+            else:
+                stale = rd / "findings.sarif"
+                try:
+                    if stale.exists():
+                        stale.unlink()
+                        ledger.append("sarif.removed", {"path": str(stale), "reason": "inconclusive_replay"}, task_id="replay")
+                except OSError as exc:
+                    ledger.append("sarif.error", {"error": str(exc)[:200], "stage": "replay"}, task_id="replay")
 
             return ReplaySummary(
                 run_dir=rd,
