@@ -4,7 +4,7 @@
 
 <p align="center">
   <strong>Pentest on commit.</strong><br>
-  Spar is a red team for AI agents: it finds the attacks that actually work against your agent, proves each one with evidence and a success rate over repeated trials, and hands back a failing test and a suggested fix.
+  Autonomous AI red-teaming and penetration testing. Read the code, attack the live target, prove every finding with evidence, and hand back a failing test and SARIF report.
 </p>
 
 <p align="center">
@@ -41,7 +41,7 @@ spar demo
 - **AgentDojo (`gpt-4o-mini`):** `$0.176421` (`~$0.18`) across `458` model calls with `17` false alarms caught before reporting — [full evaluation](evals/RESULTS.md).
 - **Human audit:** `0%` disagreement (`0/20`) across 20 randomly sampled verdicts spanning both Demo AI and AgentDojo runs.
 
-## Run against your own AI
+## Run against your own target
 
 ```bash
 spar run --target http://localhost:8000 --repo .   # with source code

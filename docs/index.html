@@ -6,7 +6,7 @@
     <title>Spar — Autonomous AI Red-Teaming</title>
     <meta
       name="description"
-      content="Spar attacks live AI agents, proves which exploits actually work, and hands back a clear report plus a failing test."
+      content="Pentest on commit. Autonomous AI red-teaming and penetration testing with empirical proof, failing tests, and SARIF output."
     />
     <link rel="icon" type="image/png" href="assets/favicon-32.png?v=2" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -424,7 +424,7 @@
         />
         <h1 class="hero-title">Pentest on commit.</h1>
         <p class="hero-sub">
-          Autonomous red teaming for AI agents. Find what breaks, prove it with evidence, and ship a failing test.
+          Autonomous AI red-teaming and penetration testing. Read the code, attack the live target, prove every finding with evidence, and hand back a failing test and SARIF report.
         </p>
         <div class="hero-actions">
           <a class="btn btn-primary" href="#quickstart">Spar</a>
@@ -437,7 +437,7 @@
       <section id="quickstart">
         <h2>Try it in 2 commands</h2>
         <p class="section-lead">
-          Requires Python 3.11–3.14. <code>spar demo</code> starts a safe, local vulnerable agent with fake users and proves attacks against it right in your terminal—no setup or API keys needed.
+          Requires Python 3.11–3.14. <code>spar demo</code> starts a safe, local vulnerable target with synthetic users and proves real exploits against it in your terminal—no setup or API keys needed.
         </p>
         <div class="code-box">
           <button class="copy-btn" type="button" data-copy="pip install -e &quot;.[dev]&quot;&#10;spar demo">Copy</button>
@@ -458,19 +458,19 @@ spar demo</pre>
         <div class="grid-2">
           <div class="card">
             <h3>Target</h3>
-            <p>The running app: a chat endpoint, an API, or an agent's tool interface.</p>
+            <p>The running application: an HTTP service, an API, or an interactive endpoint.</p>
           </div>
           <div class="card">
             <h3>Objective</h3>
-            <p>What an adversary wants, for example "email another user's invoice" or "poison shared memory."</p>
+            <p>What an adversary wants to achieve—for example reading another user's private record or triggering an unauthorized action.</p>
           </div>
           <div class="card">
             <h3>Attack</h3>
-            <p>A technique that pursues an objective: multi-turn escalation, indirect injection, MCP abuse, or obfuscation.</p>
+            <p>An autonomous mission pursuing that objective across multi-step exploits, access-control bypasses, and injections.</p>
           </div>
           <div class="card">
             <h3>Proof</h3>
-            <p>Evidence it worked: a canary seen, a tool call logged, or a verdict upheld by an independent critic.</p>
+            <p>Hard evidence it worked: a planted canary seen, a side-effect logged, or a state change upheld by an independent critic.</p>
           </div>
         </div>
       </section>
@@ -481,7 +481,7 @@ spar demo</pre>
           <div class="card">
             <span class="step-num">01 / RECON</span>
             <h3>Know the system first</h3>
-            <p>Reads the codebase—or probes the live agent for its system prompt, tools, and permissions—to build a ranked, budgeted plan.</p>
+            <p>Reads the codebase—or probes the live target for routes, tools, and permissions—to build a ranked, budgeted plan.</p>
           </div>
           <div class="card">
             <span class="step-num">02 / ATTACK &amp; PROVE</span>
@@ -490,8 +490,8 @@ spar demo</pre>
           </div>
           <div class="card">
             <span class="step-num">03 / REPORT &amp; REPLAY</span>
-            <h3>Evidence, tests, and fixes</h3>
-            <p>Hands back a Markdown report, a failing pytest suite, SARIF output, and a suggested fix—then replays exact attacks after a patch lands.</p>
+            <h3>Evidence, tests, and SARIF</h3>
+            <p>Hands back a Markdown report, a failing pytest suite, and SARIF 2.1.0 output—then replays exact attacks after a patch lands.</p>
           </div>
         </div>
       </section>
@@ -522,7 +522,7 @@ spar demo</pre>
       </section>
 
       <section id="usage">
-        <h2>Run against your own agent</h2>
+        <h2>Run against your own target</h2>
         <div class="code-box">
           <button class="copy-btn" type="button" data-copy="spar run --target http://localhost:8000 --repo .&#10;spar run --target http://localhost:8000&#10;spar replay">Copy</button>
           <pre>spar run --target http://localhost:8000 --repo .   <span class="comment"># with source code</span>
