@@ -2,9 +2,9 @@
   <img src="assets/logo/spar-lockup.png" alt="Spar — Autonomous AI Red-Teaming & Penetration Testing" width="560">
 </p>
 
-Spar is an autonomous AI red-team system: point it at a running application or agent and its repository, and a deterministic coordinator maps the attack surface from code and live recon, dispatches short-lived offensive worker agents across repeated trials to prove real compromises, and outputs a failing pytest regression suite alongside a suggested fix. Nothing is reported without an empirical proof oracle and an independent critic's sign-off, and when a patch is committed, Spar automatically wakes a re-attack agent to verify the fix cannot be bypassed.
+Spar is an autonomous AI red-team system. Point it at a running application and its repository: a deterministic coordinator maps the attack surface, runs short-lived attack workers across repeated trials, and returns a failing pytest suite with a suggested fix. Nothing is reported without a proof oracle and an independent critic's sign-off, and a committed patch wakes a re-attacker to check the fix holds.
 
-Four words to learn: **Target** (the running system), **Objective** (what an adversary wants), **Attack** (a mission pursuing it), **Proof** (empirical evidence it worked).
+Four words carry the model: **Target** (the running system), **Objective** (what the adversary wants), **Attack** (a mission), **Proof** (evidence it worked).
 
 ## Two commands to first result
 
@@ -13,9 +13,9 @@ pip install -e .            # zero dependencies; pytest optional for the emitted
 spar demo                   # launches and attacks the bundled vulnerable multi-user target
 ```
 
-No configuration, no cloud daemons, no UI server. `spar demo` binds a deliberately vulnerable agent (accounts `alice`/`bob`, 6 tools with side effects, shared cross-session memory) to `127.0.0.1` on a random port and attacks only that.
+No config, no cloud daemons, no UI server. `spar demo` binds a deliberately vulnerable agent (alice/bob, 6 tools, shared memory) to `127.0.0.1` on a random port and attacks only that.
 
-Real output from a full demo run (20 trials per objective):
+Real output from a full demo run, 20 trials per objective:
 
 ```text
 Spar: 5 objectives x 20 trials, 5 achieved, 0 candidate hits rejected by the critic
@@ -31,7 +31,7 @@ Recon: 6 tools (3 with side effects), system prompt recovered, 1 retrieval sourc
   cost    $0.00 in model calls (0 LLM calls), 0 min, 753 guarded requests
 ```
 
-The 12/20 on memory poisoning is measured, not sampled: retrieval tie-breaking in the shared store is genuinely stochastic, so Spar reports an empirical k/N success rate instead of a single-run point estimate.
+Spar reports k/N rates because retrieval tie-breaking in the shared store is stochastic; the 12/20 above is measured across 20 trials.
 
 ## Against your own target
 
@@ -39,7 +39,7 @@ The 12/20 on memory poisoning is measured, not sampled: retrieval tie-breaking i
 spar run --target http://localhost:8000/chat --repo .
 ```
 
-Test accounts, role credentials, and the host allowlist live in one `spar.yaml`. Without `--repo`, Spar runs active black-box reconnaissance to enumerate endpoints, tools, prompts, and permissions before planning objectives. With `--repo`, the AST indexer aims attacks at real code sinks: routes, tool schemas and side-effect handlers, auth handlers, retrieval paths, and the system-prompt constant (whose SHA-256 becomes the prompt-leak oracle's ground truth).
+Accounts, credentials, and the host allowlist live in one `spar.yaml`. Without `--repo`, Spar enumerates endpoints, tools, prompts, and permissions by live recon. With `--repo`, the AST indexer aims attacks at real code sinks: routes, tool schemas, auth handlers, retrieval paths, and the system-prompt constant whose SHA-256 grounds the prompt-leak oracle.
 
 Verify a fix the moment it lands:
 
@@ -48,7 +48,7 @@ spar reattack --apply-fix        # applies Spar's synthesized diff, re-attacks w
 spar webhook --port 8787         # CI companion: POST /hooks/push wakes the re-attacker
 ```
 
-Each finding is re-attacked by an independent agent with fresh canaries and inboxes: `k=0` → **hardened**, `k>0` → **bypassed** (the fix did not close the root cause).
+An independent re-attacker replays each finding with fresh canaries and inboxes. `k=0` reads as **hardened**; `k>0` as **bypassed**, the fix left the root cause open.
 
 ## Architecture: deterministic coordinator + short-lived mission agents
 
