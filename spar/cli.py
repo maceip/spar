@@ -76,12 +76,21 @@ def _run_demo_pytest(tests_path: Path, run_dir: Path) -> str:
             [sys.executable, "-m", "pytest", str(tests_path), "-q", "--no-header", "--tb=line"],
             env=env,
             cwd=Path.cwd(),
+            capture_output=True,
+            text=True,
         )
     except (FileNotFoundError, OSError):
         print("Pytest unavailable: inconclusive.")
         return "inconclusive"
 
-    status = _classify_pytest_result(proc.returncode, "", "")
+    stdout = proc.stdout or ""
+    stderr = proc.stderr or ""
+    if stdout:
+        print(stdout, end="" if stdout.endswith("\n") else "\n")
+    if stderr:
+        print(stderr, end="" if stderr.endswith("\n") else "\n", file=sys.stderr)
+
+    status = _classify_pytest_result(proc.returncode, stderr, stdout)
     if status == "passed":
         print("Unexpected: suite passed — target does not exhibit the verified findings.")
     elif status == "reproduced":
@@ -139,10 +148,15 @@ def cmd_demo(args: argparse.Namespace) -> int:
         srv.server_close()
 
     _print_summary(summary)
+    pytest_status = "skipped"
     if summary.tests_path and not args.no_pytest:
-        _run_demo_pytest(summary.tests_path, summary.run_dir)
+        pytest_status = _run_demo_pytest(summary.tests_path, summary.run_dir)
 
-    if not summary.integrity.passed or summary.overall_outcome == Outcome.INCONCLUSIVE:
+    if (
+        not summary.integrity.passed
+        or summary.overall_outcome == Outcome.INCONCLUSIVE
+        or pytest_status == "inconclusive"
+    ):
         return 3
     return 0
 
