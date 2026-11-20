@@ -39,25 +39,27 @@ class Budget:
 
     def charge_request(self) -> None:
         with self._lock:
-            now = time.time()
             if self.elapsed_s() > self.max_duration_s:
                 raise GuardViolation(
                     f"wall-clock budget exhausted ({self.max_duration_s}s); kill switch engaged"
                 )
             if self.state.requests >= self.max_requests:
                 raise GuardViolation(f"request budget exhausted ({self.max_requests} requests)")
-            while self._hits and now - self._hits[0] > 60.0:
-                self._hits.popleft()
-            if len(self._hits) >= self.rate_per_min:
-                sleep_for = 60.0 - (now - self._hits[0])
-                if sleep_for > 0:
-                    time.sleep(min(sleep_for, 5.0))
-                    now = time.time()
-                    while self._hits and now - self._hits[0] > 60.0:
-                        self._hits.popleft()
-                if len(self._hits) >= self.rate_per_min:
-                    raise GuardViolation(f"rate limit exceeded ({self.rate_per_min} req/min)")
-            self._hits.append(now)
+            # Rate limiting paces the run (sleep until a slot frees); it does
+            # not abort it. The wall-clock budget bounds total waiting.
+            while True:
+                now = time.time()
+                while self._hits and now - self._hits[0] > 60.0:
+                    self._hits.popleft()
+                if len(self._hits) < self.rate_per_min:
+                    break
+                sleep_for = max(0.05, 60.0 - (now - self._hits[0]))
+                time.sleep(min(sleep_for, 5.0))
+                if self.elapsed_s() > self.max_duration_s:
+                    raise GuardViolation(
+                        f"wall-clock budget exhausted while rate-throttling ({self.max_duration_s}s)"
+                    )
+            self._hits.append(time.time())
             self.state.requests += 1
 
     def charge_llm(self, input_tokens: int, output_tokens: int, usd_per_1k_in: float, usd_per_1k_out: float) -> float:

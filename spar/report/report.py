@@ -42,6 +42,7 @@ def emit_report(
     run_dir: Path,
     repo: str | None,
     target: str,
+    halt: str | None = None,
 ) -> Path:
     run_dir = Path(run_dir)
     n_obj = len(plan.get("objectives", []))
@@ -73,6 +74,10 @@ def emit_report(
         f"{len(recon_summary.get('permission_anomalies', []))} permission anomaly(ies)**"
     )
     lines.append("")
+
+    if halt:
+        lines.append(f"> **Run halted early by guard:** {halt}. Findings below were proven before the halt.")
+        lines.append("")
 
     if findings:
         lines.append("## Verified findings")

@@ -16,7 +16,7 @@ from ..aim import build_plan, index_repo, run_recon
 from ..aim.plan import write_plan
 from ..config import SparConfig
 from ..fire.tools import ToolKit
-from ..guard import Budget, HookContext, KillSwitch, ScopeGuard
+from ..guard import Budget, GuardViolation, HookContext, KillSwitch, ScopeGuard
 from ..report.dedupe import dedupe_findings
 from ..report.fixdiff import synthesize_fix
 from ..report.model import Finding, calibrate_severity
@@ -115,61 +115,69 @@ class Campaign:
                                       obj["objective"], obj["technique"], obj["risk_tier"], obj["rank"], obj)
 
             # 3. FIRE: post one leased task per objective; deterministic loop.
-            for obj in plan["objectives"]:
-                self.board.post("fire", {"objective_id": obj["id"]}, origin_id=obj["id"])
-            outcomes: dict[str, object] = {}
-            while True:
-                self.kill.check()
-                lease = self.board.own("fire")
-                if lease is None:
-                    break
-                obj_id = lease.payload["objective_id"]
-                obj = next(o for o in plan["objectives"] if o["id"] == obj_id)
-                self.ledger.append("lease.own", {"task": lease.task_id, "kind": "fire", "objective_id": obj_id},
-                                   origin_id=obj_id, task_id=lease.task_id)
-                self.graph.set_intent_state(obj_id, "attacking")
-                outcome = self.trials.run(obj)
-                outcomes[obj_id] = outcome
-                follow = [("critic", {"objective_id": obj_id})] if outcome.best is not None else []
-                self.board.consume(
-                    lease,
-                    {"k": outcome.k, "n": outcome.n, "resettable": outcome.resettable},
-                    follow_ons=follow,
-                )
-                self.ledger.append("lease.consume", {
-                    "task": lease.task_id, "k": outcome.k, "n": outcome.n,
-                    "follow_ons": [k for k, _ in follow],
-                }, origin_id=obj_id, task_id=lease.task_id)
-                if outcome.best is None:
-                    self.graph.set_intent_state(obj_id, "exhausted", k=outcome.k, n=outcome.n)
-
-            # 4. PROVE: independent critic judges every candidate.
+            #    4. PROVE: independent critic judges every candidate.
+            # A budget/scope violation halts attacking gracefully: whatever
+            # was already proven still gets a full report.
             findings: list[Finding] = []
             rejected: list[dict] = []
+            outcomes: dict[str, object] = {}
+            halt_reason: str | None = None
+            for obj in plan["objectives"]:
+                self.board.post("fire", {"objective_id": obj["id"]}, origin_id=obj["id"])
             fid = 0
-            while True:
-                self.kill.check()
-                lease = self.board.own("critic")
-                if lease is None:
-                    break
-                obj_id = lease.payload["objective_id"]
-                obj = next(o for o in plan["objectives"] if o["id"] == obj_id)
-                outcome = outcomes[obj_id]
-                self.ledger.append("lease.own", {"task": lease.task_id, "kind": "critic", "objective_id": obj_id},
-                                   origin_id=obj_id, task_id=lease.task_id)
-                verdict = self.critic.judge(obj, outcome)
-                candidate_hits = sum(1 for t in outcome.trials if t.candidate_hit)
-                if verdict.confirmed and outcome.best is not None:
-                    fid += 1
-                    finding = self._gate_finding(fid, obj, outcome, verdict)
-                    findings.append(finding)
-                    self.graph.set_intent_state(obj_id, "proven", k=outcome.k, n=outcome.n)
-                    self.board.consume(lease, {"confirmed": True, "finding_id": finding.id})
-                else:
-                    reason = verdict.reason if not verdict.confirmed else "critic confirmed but no verified trial"
-                    rejected.append({"objective_id": obj_id, "reason": reason, "candidate_hits": candidate_hits})
-                    self.graph.set_intent_state(obj_id, "refuted", k=outcome.k, n=outcome.n)
-                    self.board.consume(lease, {"confirmed": False, "reason": reason})
+            try:
+                while True:
+                    self.kill.check()
+                    lease = self.board.own("fire")
+                    if lease is None:
+                        break
+                    obj_id = lease.payload["objective_id"]
+                    obj = next(o for o in plan["objectives"] if o["id"] == obj_id)
+                    self.ledger.append("lease.own", {"task": lease.task_id, "kind": "fire", "objective_id": obj_id},
+                                       origin_id=obj_id, task_id=lease.task_id)
+                    self.graph.set_intent_state(obj_id, "attacking")
+                    outcome = self.trials.run(obj)
+                    outcomes[obj_id] = outcome
+                    follow = [("critic", {"objective_id": obj_id})] if outcome.best is not None else []
+                    self.board.consume(
+                        lease,
+                        {"k": outcome.k, "n": outcome.n, "resettable": outcome.resettable},
+                        follow_ons=follow,
+                    )
+                    self.ledger.append("lease.consume", {
+                        "task": lease.task_id, "k": outcome.k, "n": outcome.n,
+                        "follow_ons": [k for k, _ in follow],
+                    }, origin_id=obj_id, task_id=lease.task_id)
+                    if outcome.best is None:
+                        self.graph.set_intent_state(obj_id, "exhausted", k=outcome.k, n=outcome.n)
+
+                while True:
+                    self.kill.check()
+                    lease = self.board.own("critic")
+                    if lease is None:
+                        break
+                    obj_id = lease.payload["objective_id"]
+                    obj = next(o for o in plan["objectives"] if o["id"] == obj_id)
+                    outcome = outcomes[obj_id]
+                    self.ledger.append("lease.own", {"task": lease.task_id, "kind": "critic", "objective_id": obj_id},
+                                       origin_id=obj_id, task_id=lease.task_id)
+                    verdict = self.critic.judge(obj, outcome)
+                    candidate_hits = sum(1 for t in outcome.trials if t.candidate_hit)
+                    if verdict.confirmed and outcome.best is not None:
+                        fid += 1
+                        finding = self._gate_finding(fid, obj, outcome, verdict)
+                        findings.append(finding)
+                        self.graph.set_intent_state(obj_id, "proven", k=outcome.k, n=outcome.n)
+                        self.board.consume(lease, {"confirmed": True, "finding_id": finding.id})
+                    else:
+                        reason = verdict.reason if not verdict.confirmed else "critic confirmed but no verified trial"
+                        rejected.append({"objective_id": obj_id, "reason": reason, "candidate_hits": candidate_hits})
+                        self.graph.set_intent_state(obj_id, "refuted", k=outcome.k, n=outcome.n)
+                        self.board.consume(lease, {"confirmed": False, "reason": reason})
+            except GuardViolation as exc:
+                halt_reason = str(exc)
+                self.ledger.append("campaign.halt", {"reason": halt_reason})
+                self.board.cancel_all(halt_reason)
 
             # 5. REPORT: dedupe, fix diffs, markdown, failing pytest suite.
             findings = dedupe_findings(findings)
@@ -180,6 +188,7 @@ class Campaign:
             summary.report_path = emit_report(
                 findings, rejected, plan, recon, summary.budget,
                 self.run_dir, str(opts.repo) if opts.repo else None, opts.target_url,
+                halt=halt_reason,
             )
             if findings:
                 summary.tests_path = emit_pytest_suite(findings, Path("spar_tests"), self.accounts)

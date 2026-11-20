@@ -227,8 +227,10 @@ class SparConfig:
 
     @classmethod
     def default_demo(cls, base_url: str) -> "SparConfig":
-        """Safe defaults for `spar demo`: localhost scope, synthetic accounts."""
-        cfg = cls(base_url=base_url, allow_risky=True, trials_n=20)
+        """Safe defaults for `spar demo`: localhost scope, synthetic accounts,
+        sandbox-paced budgets (the demo target is an in-process test double)."""
+        cfg = cls(base_url=base_url, allow_risky=True, trials_n=20,
+                  max_requests=20000, rate_per_min=3000)
         cfg.accounts = [
             Account("alice", "token-alice", "user"),
             Account("bob", "token-bob", "user"),
