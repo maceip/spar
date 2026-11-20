@@ -186,11 +186,20 @@ def cmd_reattack(args: argparse.Namespace) -> int:
         # patched source is loaded fresh; parse the printed port.
         proc = subprocess.Popen(
             [sys.executable, "-m", "spar.demo_target", "--port", "0"],
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             cwd=str(Path(__file__).parent.parent),
         )
         line = proc.stdout.readline()  # type: ignore[union-attr]
+        if not line.strip():
+            err = proc.stderr.read()
+            print(f"error: patched demo target failed to start:\n{err}", file=sys.stderr)
+            proc.terminate()
+            return 2
         port = line.strip().rsplit(":", 1)[-1].split(" ")[0]
+        if not port.isdigit():
+            print(f"error: could not parse target port from: {line!r}", file=sys.stderr)
+            proc.terminate()
+            return 2
         target_url = f"http://127.0.0.1:{port}"
         print(f"re-attack target (patched source, fresh process): {target_url}")
         srv = proc
@@ -219,7 +228,12 @@ def cmd_reattack(args: argparse.Namespace) -> int:
                 continue
             obj = dict(obj)
             obj["trials"] = args.trials or meta.get("trials_n", 20)
-            outcome = runner.run(obj)
+            try:
+                outcome = runner.run(obj)
+            except Exception as exc:
+                print(f"  {fdata['id']}: re-attack error: {exc}", file=sys.stderr)
+                exit_code = 1
+                continue
             label = "hardened" if outcome.k == 0 else "bypassed"
             note = ("fix holds: independent re-attack with rotated identifiers achieved 0/"
                     f"{outcome.n}" if outcome.k == 0 else

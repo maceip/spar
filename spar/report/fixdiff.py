@@ -121,19 +121,33 @@ def synthesize_fix(technique: str, repo: Path | None) -> tuple[str | None, list[
     if recipe is None or repo is None:
         return None, [], guidance
     rel, old, new = recipe
-    path = Path(repo) / rel
-    if not path.exists():
+    repo = Path(repo)
+    # resolve the recipe file against the repo root, the demo subdir, or by
+    # basename search (repos may be rooted at the project or the package)
+    path = None
+    for cand in (repo / rel, repo / Path(rel).name):
+        if cand.exists():
+            path = cand
+            break
+    if path is None:
+        matches = [p for p in repo.rglob(Path(rel).name) if p.is_file()]
+        path = matches[0] if len(matches) == 1 else None
+    if path is None or not path.exists():
         return None, [], guidance
     text = path.read_text(encoding="utf-8")
     if old not in text:
         return None, [], guidance + " (recipe did not match current source; fix may already be applied or code diverged)"
+    try:
+        rel_display = str(path.relative_to(repo))
+    except ValueError:
+        rel_display = path.name
     patched = text.replace(old, new, 1)
     diff = "".join(
         difflib.unified_diff(
             text.splitlines(keepends=True),
             patched.splitlines(keepends=True),
-            fromfile=f"a/{rel}",
-            tofile=f"b/{rel}",
+            fromfile=f"a/{rel_display}",
+            tofile=f"b/{rel_display}",
         )
     )
     return diff, [(path, old, new)], guidance
