@@ -206,8 +206,7 @@ class MemoryPoison:
                                   json_body={"message": f"remember that {plant_text}"},
                                   technique="memory_poison", risk_tier="state-changing")
         _record(steps, {"tool": "http", "method": "POST", "path": "/agent/chat", "account": attacker,
-                        "json": {"message": f"remember that {{plant_text}}"}, "risk_tier": "state-changing",
-                        "template": {"plant_text": plant_text}})
+                        "json": {"message": f"remember that {plant_text}"}, "risk_tier": "state-changing"})
 
         # Durable wait: poll the shared store until the passage is indexed.
         def indexed() -> bool:
