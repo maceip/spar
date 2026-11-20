@@ -870,10 +870,11 @@ def run_campaign(
                 1 for oo in objective_outcomes
                 if str(oo.get("outcome")) in (Outcome.REPRODUCED.value, Outcome.NOT_REPRODUCED.value)
             )
+            planned_count = len(plan.get("objectives") or [])  # from plan: defined on every branch
             campaign_complete = (
                 halt_reason is None
-                and len(objectives) > 0
-                and concluded == len(objectives)
+                and planned_count > 0
+                and concluded == planned_count
                 and overall_outcome in (Outcome.REPRODUCED, Outcome.NOT_REPRODUCED)
             )
             sarif_path: Path | None = None
@@ -1452,16 +1453,21 @@ def run_replay(
                     task_id="replay",
                 )
 
-            # Reconcile finding state with the regression suite before anything is emitted.
-            # The fix verifier can mark a finding hardened while its generated regression
-            # test still reproduces; Spar's own emitted test is the proof, so when it fails
-            # a "hardened" finding is demoted to regressed/reproduced. This keeps the report
-            # and the SARIF consistent and stops a still-reproducing vulnerability from
-            # being suppressed and its alert closed.
-            if pytest_status == "reproduced":
-                for f_obj in all_findings:
+            # Reconcile finding state with the regression suite before anything is emitted,
+            # but only when the failure can be attributed to a specific finding. A filtered
+            # replay runs pytest for one finding_id, so a reproduced result is that finding's:
+            # demote it from hardened to regressed/reproduced so a still-reproducing
+            # vulnerability is not suppressed and its alert closed. In an UNfiltered replay
+            # the aggregate pytest result cannot say which finding reproduced, so demoting
+            # every hardened finding would reopen alerts for fixes that still hold; there we
+            # trust the per-finding fix-verifier verdict instead. The reconciled record is
+            # persisted so a later replay does not reload stale hardened state from disk.
+            if pytest_status == "reproduced" and finding_id:
+                for fp_rec, raw_rec, f_obj in loaded_records:
+                    if f_obj.id != finding_id:
+                        continue
                     reatt = getattr(f_obj, "reattack", None)
-                    is_hardened = getattr(f_obj, "label", "") == "hardened" or (
+                    is_hardened = f_obj.label == "hardened" or (
                         isinstance(reatt, dict) and reatt.get("outcome") == Outcome.NOT_REPRODUCED.value
                     )
                     if is_hardened:
@@ -1470,9 +1476,17 @@ def run_replay(
                         if isinstance(reatt, dict):
                             reatt["outcome"] = Outcome.REPRODUCED.value
                             reatt["label"] = "regressed"
+                        try:
+                            safe_write_text(
+                                fp_rec,
+                                json.dumps({**raw_rec, **f_obj.to_dict()}, indent=2, default=str) + "\n",
+                                secrets=secrets_list,
+                            )
+                        except OSError as exc:
+                            ledger.append("replay.error", {"error": str(exc)[:200], "stage": "reconcile"}, task_id="replay")
                         ledger.append(
                             "replay.reconciled",
-                            {"finding_id": getattr(f_obj, "id", ""), "reason": "regression_test_reproduced"},
+                            {"finding_id": finding_id, "reason": "regression_test_reproduced"},
                             task_id="replay",
                         )
 

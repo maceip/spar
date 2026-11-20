@@ -227,7 +227,8 @@ def _finding_to_dict(
     else:
         patch_status = ""
 
-    loc = _location_for(surfaces_by_obj.get(oid, []), _exercised_symbols(finding))
+    exercised = _exercised_symbols(finding)
+    loc = _location_for(surfaces_by_obj.get(oid, []), exercised)
     if loc is not None:
         filepath, line = loc
         filepath = _rebase_to_root(filepath, repo)
@@ -235,12 +236,14 @@ def _finding_to_dict(
     else:
         filepath, line_numbers = report_rel, [1]
 
-    # Fingerprint from a durable semantic identity: technique + objective_id, which is
-    # fixed by the deterministic plan (one finding per objective) and, unlike the
-    # run-local finding id or the anchor filepath, survives both renumbering and a
-    # rename/move of the vulnerable source, so a consumer correlates the same
-    # vulnerability across runs instead of closing and reopening its alert.
-    signature = hashlib.sha1(f"{technique}|{oid}".encode("utf-8")).hexdigest()[:16]
+    # Fingerprint from a durable semantic identity that survives across runs: the technique
+    # plus the tool/symbol surface it exercised. This deliberately excludes the run-local
+    # finding id, the anchor filepath (renames) AND the objective_id (build_plan numbers it
+    # obj-<rank>-<technique>, so gaining/losing an earlier candidate would shift it) -- all
+    # of which would make a consumer close and reopen the same alert. Falls back to the
+    # objective text when no symbol was recorded (black-box findings).
+    identity = ",".join(sorted(exercised)) if exercised else objective.strip().lower()
+    signature = hashlib.sha1(f"{technique}|{identity}".encode("utf-8")).hexdigest()[:16]
 
     description = (
         f"{objective} Proven by oracle `{oracle}` at {k}/{n} trials "

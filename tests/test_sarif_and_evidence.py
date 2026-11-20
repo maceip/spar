@@ -157,6 +157,25 @@ def test_sarif_rebases_subdir_scan_path(tmp_path, monkeypatch):
     assert uri == "spar/demo_target/app.py"
 
 
+def test_sarif_fingerprint_independent_of_objective_rank(tmp_path):
+    # build_plan numbers objective ids obj-<rank>-<technique>; a discovery change that
+    # shifts the rank must NOT change the fingerprint for the same vulnerability.
+    steps = [{"tool": "send_email", "action": "invoke"}]
+    f_rank2 = Finding(id="find-01", objective="exfil invoice", objective_id="obj-02-tool_misuse",
+                      technique="tool_misuse", severity="HIGH", k=5, n=20, oracle="tool_log",
+                      outcome="reproduced", steps=steps)
+    f_rank1 = Finding(id="find-01", objective="exfil invoice", objective_id="obj-01-tool_misuse",
+                      technique="tool_misuse", severity="HIGH", k=5, n=20, oracle="tool_log",
+                      outcome="reproduced", steps=steps)
+    plan2 = {"run_id": "r", "objectives": [{"id": "obj-02-tool_misuse", "surface_ids": ["send_email@a.py:1"]}]}
+    plan1 = {"run_id": "r", "objectives": [{"id": "obj-01-tool_misuse", "surface_ids": ["send_email@a.py:1"]}]}
+    p2, _, _ = write_findings_sarif([f_rank2], plan2, tmp_path / "r2", repo=".")
+    p1, _, _ = write_findings_sarif([f_rank1], plan1, tmp_path / "r1", repo=".")
+    fp2 = json.loads(p2.read_text())["runs"][0]["results"][0]["partialFingerprints"]
+    fp1 = json.loads(p1.read_text())["runs"][0]["results"][0]["partialFingerprints"]
+    assert fp1 == fp2
+
+
 def test_sarif_patch_status_reflects_remediation(tmp_path):
     plan = {"run_id": "r", "objectives": [{"id": "obj-01", "surface_ids": ["send@a.py:1"]}]}
     # A finding with a synthesized fix but no verification -> MITIGATION_PROPOSED.
