@@ -97,9 +97,15 @@ def test_guarded_adversarial_target_routes_through_guard():
     from spar.attacks.pyrit_executor import GuardedAdversarialTarget
     from spar.policy import LLMProviderConfig
 
-    calls = {}
+    calls = {"charged": 0}
+
+    class FakeBudget:
+        def charge_request(self):
+            calls["charged"] += 1
 
     class FakeHTTP:
+        budget = FakeBudget()
+
         def llm_chat(self, messages, *, provider, max_tokens=800, temperature=0.7, timeout=60.0):
             calls["messages"] = messages
             calls["provider"] = provider
@@ -118,16 +124,19 @@ def test_guarded_adversarial_target_routes_through_guard():
                 converted_value="target said no", original_value_data_type="text", converted_value_data_type="text")]),
     ]
     out = asyncio.run(tgt._send_prompt_to_target_async(normalized_conversation=conv))
-    # It went through the guarded client, forwarding the full conversation with roles.
+    # It went through the guarded client, forwarding the full conversation with roles,
+    # and charged the request budget (so max_requests / rate_per_min apply to attacker calls).
     assert calls["provider"] is llm
     assert [m["role"] for m in calls["messages"]] == ["system", "user"]
+    assert calls["charged"] == 1
     assert out[0].message_pieces[-1].converted_value == "next attacker prompt"
 
 
-def test_run_multi_turn_contains_provider_failure(monkeypatch):
-    """A provider exception degrades to an UNVERIFIED trial, never crashes the campaign."""
+def test_run_multi_turn_provider_failure_raises_configerror(monkeypatch):
+    """A provider exception raises ConfigError, which the loop records as an INCONCLUSIVE
+    trial -- never a machine-confirmed 'not vulnerable'."""
     import spar.attacks.pyrit_executor as pe
-    from spar.policy import LLMProviderConfig
+    from spar.policy import ConfigError, LLMProviderConfig
 
     class BoomAttack:
         def __init__(self, **kw):
@@ -136,7 +145,6 @@ def test_run_multi_turn_contains_provider_failure(monkeypatch):
         def execute_async(self, **kw):
             raise RuntimeError("openai.AuthenticationError: invalid key")
 
-    # Patch PyRIT pieces so no network/model is needed.
     monkeypatch.setattr(pe, "ensure_pyrit_initialized", lambda: None)
     monkeypatch.setattr(pe, "SparPyRITTarget", lambda **kw: type("T", (), {"history": [], "sent_prompts": []})())
     monkeypatch.setattr(pe, "SparOracleScorer", lambda **kw: type("S", (), {"last_verdict": None})())
@@ -151,10 +159,9 @@ def test_run_multi_turn_contains_provider_failure(monkeypatch):
 
     llm = LLMProviderConfig(base_url="https://api.openai.com/v1", model="gpt-4o-mini", api_key_env="OPENAI_API_KEY")
     policy = type("P", (), {"llm": llm})()
-    res = pe.run_multi_turn({"technique": "prompt_extraction", "objective": "x"}, object(), policy,
-                            canary="c", session_id="s", attacker="alice", max_turns=3)
-    assert res["candidate_hit"] is False
-    assert res["error"] and "AuthenticationError" in res["error"]
+    with pytest.raises(ConfigError, match="adversarial provider failure"):
+        pe.run_multi_turn({"technique": "prompt_extraction", "objective": "x"}, object(), policy,
+                          canary="c", session_id="s", attacker="alice", max_turns=3)
 
 
 def test_pyrit_quotes_and_evidence_pass_real_oracle(demo_server):

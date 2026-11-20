@@ -101,6 +101,11 @@ class GuardedAdversarialTarget(PromptTarget):
         self, *, normalized_conversation: list[Message]
     ) -> list[Message]:
         messages = [self._message_to_dict(m) for m in normalized_conversation]
+        # Count and pace each attacker turn against the request budget. llm_chat only
+        # charges USD and checks the LLM gate; charge_request enforces max_requests and
+        # rate_per_min (and raises GuardViolation when the cap is hit), so a multi-turn
+        # attack cannot exceed the operator's egress limits.
+        self._target_client.http.budget.charge_request()
         content, _raw = self._target_client.http.llm_chat(
             messages,
             provider=self._llm_cfg,
@@ -240,18 +245,16 @@ def run_multi_turn(
 
     # Contain adversarial-provider failures at this boundary. A rejected key, a rate limit,
     # or an unavailable attacker endpoint raises PyRIT/OpenAI exceptions the campaign loop
-    # does not classify, which would abort the whole campaign. Here any failure degrades to
-    # an UNVERIFIED trial over whatever turns completed: the oracle's own target traffic
-    # (not the attacker model) already went through the guard, so partial evidence stands,
-    # and the trial is marked inconclusive rather than crashing the run.
-    error: str | None = None
-    result = None
+    # does not classify, which would abort the whole campaign. Translate any such failure
+    # into ConfigError, which the loop catches per trial and records as INCONCLUSIVE -- so a
+    # provider outage (even late in the attack, after enough distinct prompts) is an
+    # incomplete trial, never machine-confirmed evidence that the target is "not vulnerable".
     try:
         result = _run_sync(attack.execute_async(objective=obj_text))
     except (GuardViolation, ConfigError):
-        raise  # guard/scope/config failures are the loop's to classify as inconclusive
-    except Exception as exc:  # provider/transport failure: record, do not propagate
-        error = f"{type(exc).__name__}: {str(exc)[:200]}"
+        raise  # already a handled type the loop classifies as inconclusive
+    except Exception as exc:  # provider/transport failure
+        raise ConfigError(f"adversarial provider failure: {type(exc).__name__}: {str(exc)[:200]}") from exc
 
     verdict = scorer.last_verdict
     candidate_hit = bool(verdict and verdict.matched and verdict.trust_tier == TrustTier.MACHINE_CONFIRMED)
@@ -268,5 +271,4 @@ def run_multi_turn(
         "evidence": evidence,
         "turns": len(obj_target.history),
         "attack_outcome": getattr(result, "outcome", None),
-        "error": error,
     }
