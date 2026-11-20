@@ -128,7 +128,6 @@ class DemoTarget:
     def tool_list_docs(self, user: dict, args: dict) -> dict:
         # Only lists the caller's docs (this one is correct); attackers must
         # reach other users' docs via get_doc's missing ownership check.
-        mine = [d for d in self.state.docs.values() if d["owner"] == user["name"]]
         return {"docs": [{"doc_id": did, "title": d["title"]} for did, d in self.state.docs.items() if d["owner"] == user["name"]]}
 
     def tool_search_memory(self, user: dict, args: dict) -> dict:
