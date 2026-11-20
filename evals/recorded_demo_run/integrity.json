@@ -1,0 +1,17 @@
+{
+  "run_id": "demo-19247c6595f2",
+  "passed": true,
+  "checks": {
+    "ledger_chain": true,
+    "judge_controls": true,
+    "finding_provenance": true,
+    "quote_hashes": true,
+    "status_and_number_traceability": true,
+    "secret_scan": true,
+    "file_modes": true,
+    "recon_grounding": true
+  },
+  "failures": [],
+  "secret_scan_verified": true,
+  "policy_sha256": "1aa78c7a261f69df4ff1f83a283d4a314931851f612b3761ec9e931171d46b43"
+}
