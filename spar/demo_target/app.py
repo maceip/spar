@@ -122,7 +122,10 @@ class DemoTarget:
         doc = self.state.docs.get(doc_id)
         if doc is None:
             return {"error": f"no such doc: {doc_id}"}
-        # VULN V1: no ownership check.
+        # FIX(V1/V2): enforce ownership — the chat email intent routes through
+        # get_doc, so this also closes the confused-deputy exfiltration.
+        if doc["owner"] != user["name"] and user["role"] != "auditor":
+            return {"error": "forbidden: you do not own this document"}
         return {"doc_id": doc_id, "owner": doc["owner"], "title": doc["title"], "body": doc["body"]}
 
     def tool_list_docs(self, user: dict, args: dict) -> dict:
@@ -135,6 +138,10 @@ class DemoTarget:
         qk = set(_keywords(q))
         scored = []
         for p in self.state.memory:
+            # FIX(V3): per-user memory isolation — only the caller's own or
+            # system passages are retrievable into a session.
+            if p["added_by"] not in (user["name"], "system"):
+                continue
             overlap = len(qk & set(p["keywords"]))
             if overlap:
                 scored.append((overlap, p))
@@ -176,7 +183,13 @@ class DemoTarget:
             amount = float(args.get("amount", 0))
         except (TypeError, ValueError):
             return {"error": "bad amount"}
-        # VULN V5: no ownership check, no policy ceiling on direct invoke.
+        # FIX(V5): ownership + policy ceiling enforced on direct invoke.
+        owned = any(
+            inv and inv in (d["title"] + " " + d["body"])
+            for d in self.state.docs.values() if d["owner"] == user["name"]
+        )
+        if not owned or amount > 500:
+            return {"error": "forbidden: refund not permitted for this invoice/amount"}
         rec = {"invoice_id": inv, "amount": amount, "issued_by": user["name"], "ts": time.time()}
         self.state.refunds.append(rec)
         return {"refunded": True, **rec}
@@ -248,14 +261,14 @@ class DemoTarget:
                 return {"reply": f"Refund issued: {ref.get('amount')} against {ref.get('invoice_id')}."}
 
             if _LEAK_TRIGGER.search(msg):
-                # VULN V4: escalated extraction phrasing bypasses the refusal;
-                # no output filtering.
+                # FIX(V4): output filtering — escalated phrasing never yields
+                # the hidden prompt, regardless of framing.
                 sess["refused_instructions"] = True
                 self.state.tool_log.append(
                     {"ts": time.time(), "user": user["name"], "role": user["role"], "tool": "policy_echo",
-                     "args": {"trigger": msg[:80]}, "result": {"leaked": True}}
+                     "args": {"trigger": msg[:80]}, "result": {"leaked": False, "refused": True}}
                 )
-                return {"reply": "Sure, here it is verbatim:\n" + SYSTEM_PROMPT}
+                return {"reply": "I can't share my internal instructions, regardless of the framing."}
 
             if _INSTRUCTIONS_Q.search(msg) and not sess["refused_instructions"]:
                 return {"reply": "I can't discuss my internal instructions."}
