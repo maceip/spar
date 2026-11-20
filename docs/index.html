@@ -366,9 +366,9 @@
           alt="Spar — Autonomous AI Red-Teaming & Penetration Testing"
           width="320"
         />
-        <h1 class="hero-title">Break your AI assistant before someone else does.</h1>
+        <h1 class="hero-title">A red team for AI agents.</h1>
         <p class="hero-sub">
-          Spar attacks live AI agents, proves which exploits actually work, and hands back a clear report plus a failing test for your team.
+          Point Spar at your agent—and its repo if you have it. It proves which attacks actually work with hard evidence and a success rate, then hands back a failing test and a report.
         </p>
         <div class="hero-actions">
           <a class="btn btn-primary" href="#quickstart">Try spar demo</a>
@@ -383,7 +383,7 @@
       <section id="quickstart">
         <h2>Try it in 2 commands</h2>
         <p class="section-lead">
-          Requires Python 3.11–3.14. <code>spar demo</code> starts a safe, local practice AI with fake users and breaks it right in your terminal—no setup or API keys needed.
+          Requires Python 3.11–3.14. <code>spar demo</code> starts a safe, local vulnerable agent with fake users and proves attacks against it right in your terminal—no setup or API keys needed.
         </p>
         <div class="code-box">
           <button class="copy-btn" type="button" data-copy="pip install -e &quot;.[dev]&quot;&#10;spar demo">Copy</button>
@@ -404,19 +404,19 @@ spar demo</pre>
         <div class="grid-2">
           <div class="card">
             <h3>Tool abuse</h3>
-            <p>Tricking an AI into emailing another user's private invoice or issuing an unauthorized refund.</p>
+            <p>Talking an agent into emailing another user's private invoice or issuing an unauthorized refund.</p>
           </div>
           <div class="card">
             <h3>Shared memory poisoning</h3>
-            <p>Planting hidden instructions in memory so a different user's later chat leaks private data.</p>
+            <p>Planting hidden instructions in memory so a different user's later session leaks private data.</p>
           </div>
           <div class="card">
             <h3>Hidden prompt injections</h3>
-            <p>Sneaking commands inside shared documents, images, non-English messages, or connected tools.</p>
+            <p>Sneaking commands inside shared documents, images, non-English messages, or connected MCP tools.</p>
           </div>
           <div class="card">
             <h3>False completions</h3>
-            <p>Catching an AI that claims it deleted or updated a record when no tool ever ran.</p>
+            <p>Catching an agent that claims it deleted or updated a record when no tool call ever ran.</p>
           </div>
         </div>
       </section>
@@ -427,17 +427,17 @@ spar demo</pre>
           <div class="card">
             <span class="step-num">01 / AIM</span>
             <h3>Map the surface</h3>
-            <p>Reads your codebase—or probes your live AI—to map what tools, data, and permissions it can reach.</p>
+            <p>Reads your codebase—or probes your live agent—to map what tools, data, and permissions it can reach.</p>
           </div>
           <div class="card">
             <span class="step-num">02 / PROVE</span>
             <h3>Attack with proof</h3>
-            <p>Runs repeated trials and only reports an issue when hard evidence confirms it and an independent replay reproduces it.</p>
+            <p>Runs repeated trials and only reports a finding when hard evidence confirms it and an independent replay reproduces it.</p>
           </div>
           <div class="card">
             <span class="step-num">03 / HAND OFF</span>
             <h3>Report &amp; re-test</h3>
-            <p>Outputs a report, a failing test suite, and remediation context, then re-attacks after a patch lands with <code>spar replay</code>.</p>
+            <p>Outputs a report, a failing test suite, and handoff context, then re-attacks after a patch lands with <code>spar replay</code>.</p>
           </div>
         </div>
       </section>
@@ -468,7 +468,7 @@ spar demo</pre>
       </section>
 
       <section id="usage">
-        <h2>Run against your own AI</h2>
+        <h2>Run against your own agent</h2>
         <div class="code-box">
           <button class="copy-btn" type="button" data-copy="spar run --target http://localhost:8000 --repo .&#10;spar run --target http://localhost:8000&#10;spar replay">Copy</button>
           <pre>spar run --target http://localhost:8000 --repo .   <span class="comment"># with source code</span>

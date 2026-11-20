@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <strong>Break your AI assistant before someone else does.</strong><br>
-  Spar attacks live AI agents, proves which exploits actually work, and hands back a clear report plus a failing test for your team.
+  <strong>A red team for AI agents.</strong><br>
+  Point Spar at your agent—and its repo if you have it. It proves which attacks actually work with hard evidence and a success rate, then hands back a report and a failing test.
 </p>
 
 <p align="center">
