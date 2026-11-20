@@ -887,23 +887,58 @@ def _load_campaign_state(run_dir: Path, ledger: Ledger, plan: dict[str, Any]) ->
     return recon_summary, objective_outcomes, [], None
 
 
+def _resolve_demo_app_path(repo: Path | None) -> Path | None:
+    if repo is None:
+        return None
+    rp = Path(repo)
+    if rp.is_file() and rp.suffix == ".py":
+        return rp.resolve()
+    for candidate in (
+        rp / "app.py",
+        rp / "demo_target" / "app.py",
+        rp / "spar" / "demo_target" / "app.py",
+    ):
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
 def _start_demo_subprocess(
     policy: CampaignPolicy,
     cred_store: CredentialStore,
+    *,
+    repo: Path | None = None,
 ) -> tuple[subprocess.Popen[str], str]:
     sub_env = dict(os.environ)
     for acct in policy.accounts:
         if acct.token_env:
             sub_env[acct.token_env] = cred_store.get_token(acct.name)
 
-    repo_root = Path(__file__).resolve().parent.parent
+    app_py = _resolve_demo_app_path(repo)
+    if app_py is not None:
+        loader_code = (
+            "import importlib.util, sys; "
+            "spec = importlib.util.spec_from_file_location('spar_demo_target_exec', sys.argv[1]); "
+            "mod = importlib.util.module_from_spec(spec); "
+            "sys.modules['spar_demo_target_exec'] = mod; "
+            "spec.loader.exec_module(mod); "
+            "sys.argv = [sys.argv[1], '--port', '0']; "
+            "mod.main()"
+        )
+        cmd = [sys.executable, "-c", loader_code, str(app_py)]
+        cwd = str(app_py.parent)
+    else:
+        repo_root = Path(__file__).resolve().parent.parent
+        cmd = [sys.executable, "-m", "spar.demo_target", "--port", "0"]
+        cwd = str(repo_root)
+
     proc = subprocess.Popen(
-        [sys.executable, "-m", "spar.demo_target", "--port", "0"],
+        cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         env=sub_env,
-        cwd=str(repo_root),
+        cwd=cwd,
     )
     if proc.stdout is None:
         proc.terminate()
@@ -1039,7 +1074,7 @@ def run_replay(
 
         proc: subprocess.Popen[str] | None = None
         if policy.demo_mode and not target_override:
-            proc, effective_url = _start_demo_subprocess(policy, cred_store)
+            proc, effective_url = _start_demo_subprocess(policy, cred_store, repo=resolved_repo)
 
         ScopeGuard(policy.allowlist_hosts, allow_risky=policy.allow_risky).check_url(effective_url)
         kill = KillSwitch(rd / "STOP")
