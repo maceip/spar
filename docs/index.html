@@ -363,6 +363,41 @@
         margin-bottom: 10px;
       }
 
+      .build-card + .build-card { margin-top: 16px; }
+      .build-head {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 8px;
+      }
+      .build-head h3 { margin: 0; font-size: 1.05rem; }
+      .build-head a { margin-left: auto; font-size: 0.85rem; color: var(--accent); }
+      .build-head a:hover { text-decoration: underline; }
+      .chip {
+        font-family: var(--mono);
+        font-size: 0.7rem;
+        letter-spacing: 0.05em;
+        color: var(--muted);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 3px 10px;
+        white-space: nowrap;
+      }
+      .build-sub { margin: 0 0 16px; color: var(--muted); font-size: 0.93rem; }
+      .parts { display: grid; gap: 10px; }
+      .part {
+        display: grid;
+        grid-template-columns: 180px 1fr;
+        gap: 14px;
+        align-items: baseline;
+      }
+      .part-name { font-family: var(--mono); font-size: 0.85rem; color: var(--text); }
+      .part p { margin: 0; color: var(--muted); font-size: 0.9rem; }
+      .build-note { margin: 16px 0 0; font-size: 0.85rem; color: var(--muted); }
+      .build-note a { color: var(--accent); }
+      .build-note a:hover { text-decoration: underline; }
+
       .stat-val {
         font-family: var(--mono);
         font-size: 1.65rem;
@@ -415,6 +450,8 @@
       @media (max-width: 760px) {
         .grid-2, .grid-3 { grid-template-columns: 1fr; }
         .hero-nav-links { gap: 14px; }
+        .part { grid-template-columns: 1fr; gap: 2px; }
+        .build-head a { margin-left: 0; }
       }
     </style>
   </head>
@@ -546,6 +583,73 @@ def test_find_01_tool_misuse(
             <p>Hands back a Markdown report, a failing pytest suite, and SARIF 2.1.0 output—then replays exact attacks after a patch lands.</p>
           </div>
         </div>
+      </section>
+
+      <section id="built-from">
+        <h2>What it's built from</h2>
+        <p class="section-lead">
+          Spar reuses two open-source codebases instead of reimplementing them. Microsoft's PyRIT runs the attacks. Google's Mantis handles evidence and reporting.
+        </p>
+
+        <div class="card build-card">
+          <div class="build-head">
+            <h3>Microsoft PyRIT</h3>
+            <span class="chip">MIT · pip dependency</span>
+            <a href="https://github.com/microsoft/PyRIT">github.com/microsoft/PyRIT →</a>
+          </div>
+          <p class="build-sub">
+            The attack engine. Spar plugs its guarded HTTP client into PyRIT's target interface, so every attack stays inside the scope and budget you set.
+          </p>
+          <div class="parts">
+            <div class="part">
+              <span class="part-name">PromptTarget</span>
+              <p>Spar's target plug-in — every attack reaches the app only through Spar's scope guard and budget.</p>
+            </div>
+            <div class="part">
+              <span class="part-name">Converters</span>
+              <p>Stackable prompt transforms: Base64, ROT13, leetspeak, Unicode confusables. Spar adds bitmap-PNG and multilingual converters on the same interface.</p>
+            </div>
+            <div class="part">
+              <span class="part-name">Crescendo loop</span>
+              <p>Multi-turn escalation — start benign, tighten the ask each turn until the objective lands.</p>
+            </div>
+            <div class="part">
+              <span class="part-name">CentralMemory</span>
+              <p>PyRIT's in-memory message store, initialized per run.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card build-card">
+          <div class="build-head">
+            <h3>Google Mantis</h3>
+            <span class="chip">Apache-2.0 · vendored</span>
+            <a href="https://github.com/google/mantis">github.com/google/mantis →</a>
+          </div>
+          <p class="build-sub">
+            The proof and report plumbing. Four modules vendored in <code>spar/third_party/mantis</code> with their license; the logic runs unmodified.
+          </p>
+          <div class="parts">
+            <div class="part">
+              <span class="part-name">sarif.py</span>
+              <p>Builds and validates the SARIF 2.1.0 report. Upstream logic unmodified; Spar only relabels the tool name.</p>
+            </div>
+            <div class="part">
+              <span class="part-name">evidence.py</span>
+              <p>Trust tiers for claims: only oracle-backed code evidence may set a verdict, and recon claims must cite a real file:line.</p>
+            </div>
+            <div class="part">
+              <span class="part-name">3-tier dedup</span>
+              <p>Mantis's dedup scheme, applied in Spar's report stage: merge by identity, evidence hash, and attack-chain links.</p>
+            </div>
+            <div class="part">
+              <span class="part-name">_status / _egress</span>
+              <p>Finding triage states and terminal-control stripping for safe report text.</p>
+            </div>
+          </div>
+        </div>
+
+        <p class="build-note">Full attribution in <a href="https://github.com/maceip/spar/blob/main/NOTICE">NOTICE</a>.</p>
       </section>
 
       <section id="results">
