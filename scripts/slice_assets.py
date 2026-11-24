@@ -13,6 +13,8 @@ sheet into bands and elements; no hardcoded pixel boxes.
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -185,6 +187,8 @@ def slice_spec_sheet(path: Path) -> None:
     save_flat(app512.resize((16, 16), Image.LANCZOS), OUT_LOGO / "favicon-16.png")
     save_keyed(img.crop(boxmark), OUT_LOGO / "spar-mark-glossy.png")
 
+
+def build_lockup() -> None:
     # lockup: flat mark + wordmark on one transparent canvas
     mark = Image.open(OUT_LOGO / "spar-mark.png").convert("RGBA")
     word = Image.open(OUT_LOGO / "spar-wordmark.png").convert("RGBA")
@@ -205,11 +209,81 @@ def save_flat_rgba(img: Image.Image, path: Path) -> None:
     print(f"  {path.relative_to(ROOT)}  {img.size[0]}x{img.size[1]}")
 
 
+def slice_transparent_lockup(path: Path) -> None:
+    """Split the 2026-11 transparent RGBA lockup (blade emblem + wordmark).
+
+    Unlike the JPEG sheets, this source already carries alpha, so clusters
+    come from the alpha channel and crops keep it verbatim.
+    """
+    img = Image.open(path).convert("RGBA")
+    alpha = np.array(img)[:, :, 3]
+    runs = clusters((alpha > 8).sum(axis=0) > 0, min_gap=24, min_size=20)
+    if len(runs) != 2:
+        raise SystemExit(f"expected emblem + wordmark clusters, got {len(runs)}")
+    (ex0, ex1), (wx0, wx1) = runs
+
+    def tight(crop: Image.Image) -> Image.Image:
+        # getbbox() keeps faint alpha noise rows; trim at the same threshold
+        # the column clusters use so crops carry no transparent padding
+        a = np.array(crop)[:, :, 3]
+        ys, xs = np.where(a > 8)
+        return crop.crop((int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1))
+
+    emblem = tight(img.crop((ex0, 0, ex1 + 1, img.height)))
+    word = tight(img.crop((wx0, 0, wx1 + 1, img.height)))
+    eh = 240
+    save_flat_rgba(
+        emblem.resize((int(emblem.width * eh / emblem.height), eh), Image.LANCZOS),
+        OUT_LOGO / "spar-blades.png",
+    )
+    ww = 640
+    save_flat_rgba(
+        word.resize((ww, int(word.height * ww / word.width)), Image.LANCZOS),
+        OUT_LOGO / "spar-wordmark.png",
+    )
+
+
+def build_blades_loop(path: Path) -> None:
+    """Square emblem loop from the rotating-blades render.
+
+    The render's near-black backdrop is crushed to pure black so the page can
+    screen-blend the loop over the sharks hero without a visible rectangle.
+    """
+    out = OUT_LOGO / "spar-blades.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-v", "error", "-y", "-i", str(path),
+            "-vf",
+            "crop=min(iw\\,ih):min(iw\\,ih):(iw-min(iw\\,ih))/2:0,"
+            "scale=240:240:flags=lanczos,"
+            "colorlevels=rimin=0.0627:gimin=0.0627:bimin=0.0627,"
+            "format=yuv420p",
+            "-c:v", "libx264", "-crf", "20", "-preset", "slow",
+            "-movflags", "+faststart",
+            str(out),
+        ],
+        check=True,
+    )
+    print(f"  {out.relative_to(ROOT)}  {out.stat().st_size} bytes")
+
+
+def publish_docs_logo() -> None:
+    docs = ROOT / "docs" / "assets"
+    docs.mkdir(parents=True, exist_ok=True)
+    for name in ("spar-wordmark.png", "spar-blades.png", "spar-blades.mp4"):
+        shutil.copyfile(OUT_LOGO / name, docs / name)
+        print(f"  docs/assets/{name}")
+
+
 def main() -> int:
     for out in (OUT_LOGO, OUT_ICONS, OUT_ILLUS):
         out.mkdir(parents=True, exist_ok=True)
     slice_brand_sheet(SRC / "sheet-brand.jpeg")
     slice_spec_sheet(SRC / "sheet-logo-specs.jpeg")
+    slice_transparent_lockup(SRC / "sheet-lockup-2026-11.png")
+    build_lockup()
+    build_blades_loop(SRC / "blades-rotating-clockwise.mp4")
+    publish_docs_logo()
     return 0
 
 
