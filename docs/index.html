@@ -362,6 +362,19 @@
         margin-bottom: 10px;
       }
 
+      .h-icon {
+        width: 22px;
+        height: 22px;
+        vertical-align: -4px;
+        margin-right: 10px;
+      }
+      .card-icon {
+        display: block;
+        width: 44px;
+        height: 44px;
+        margin-bottom: 12px;
+      }
+
       .build-card + .build-card { margin-top: 16px; }
       .build-head {
         display: flex;
@@ -515,7 +528,7 @@ spar demo</pre>
       </section>
 
       <section id="artifacts">
-        <h2>What you get</h2>
+        <h2><img class="h-icon" src="assets/icons/verification-proof.png" alt="" />What you get</h2>
         <p class="section-lead">
           A real finding from the recorded demo run, and the regression test Spar generated for it. The test fails while the bug exists and passes once your patch holds.
         </p>
@@ -564,19 +577,22 @@ def test_find_01_tool_misuse(
       </section>
 
       <section id="how">
-        <h2>One program, one loop</h2>
+        <h2><img class="h-icon" src="assets/icons/coordinator.png" alt="" />One program, one loop</h2>
         <div class="grid-3">
           <div class="card">
+            <img class="card-icon" src="assets/icons/target-scope.png" alt="" />
             <span class="step-num">01 / RECON</span>
             <h3>Know the system first</h3>
             <p>Reads the codebase—or probes the live target for routes, tools, and permissions—to build a ranked, budgeted plan.</p>
           </div>
           <div class="card">
+            <img class="card-icon" src="assets/icons/attack-agent.png" alt="" />
             <span class="step-num">02 / ATTACK &amp; PROVE</span>
             <h3>Models propose, code verifies</h3>
             <p>Runs N trials from fresh sessions. Nothing is reported until a deterministic oracle proves it and an independent critic fails to refute it.</p>
           </div>
           <div class="card">
+            <img class="card-icon" src="assets/icons/continuous-trigger.png" alt="" />
             <span class="step-num">03 / REPORT &amp; REPLAY</span>
             <h3>Evidence, tests, and SARIF</h3>
             <p>Hands back a Markdown report, a failing pytest suite, and SARIF 2.1.0 output—then replays exact attacks after a patch lands.</p>
@@ -652,7 +668,7 @@ def test_find_01_tool_misuse(
       </section>
 
       <section id="results">
-        <h2>Measured results</h2>
+        <h2><img class="h-icon" src="assets/icons/trial-calibration.png" alt="" />Measured results</h2>
         <p class="section-lead">Every metric below comes from recorded runs—no simulated or extrapolated numbers.</p>
         <div class="grid-3">
           <div class="card">
@@ -677,7 +693,7 @@ def test_find_01_tool_misuse(
       </section>
 
       <section id="usage">
-        <h2>Run against your own target</h2>
+        <h2><img class="h-icon" src="assets/icons/guard-budget.png" alt="" />Run against your own target</h2>
         <div class="code-box">
           <button class="copy-btn" type="button" data-copy="spar run --target http://localhost:8000 --repo .&#10;spar run --target http://localhost:8000&#10;spar replay">Copy</button>
           <pre>spar run --target http://localhost:8000 --repo .   <span class="comment"># with source code</span>
@@ -709,7 +725,7 @@ spar replay                                      <span class="comment"># re-atta
       </details>
 
       <section class="safety-box">
-        <h2>Safety by default</h2>
+        <h2><img class="h-icon" src="assets/icons/isolation-sandbox.png" alt="" />Safety by default</h2>
         <p style="margin: 0; color: #d1d5db;">
           Spar only contacts <code>localhost</code> and hosts explicitly allowlisted in
           <a href="https://github.com/maceip/spar/blob/main/spar.yaml" style="color: var(--accent); text-decoration: underline;">spar.yaml</a>,

@@ -209,6 +209,53 @@ def save_flat_rgba(img: Image.Image, path: Path) -> None:
     print(f"  {path.relative_to(ROOT)}  {img.size[0]}x{img.size[1]}")
 
 
+def slice_glossy_icons(path: Path) -> None:
+    """Slice the glossy 3D icon sheet (8 icons + caption band) on dark bg.
+
+    Luminance keying would turn the icons' own dark metal facets translucent,
+    so the connected backdrop is flood-filled from the crop corners instead;
+    interior dark pixels stay opaque. Captions are dropped by row band.
+    """
+    from PIL import ImageDraw
+
+    img = Image.open(path).convert("RGB")
+    rgb = np.array(img)
+    bg = np.median(np.concatenate([rgb[0], rgb[-1], rgb[:, 0], rgb[:, -1]]), axis=0)
+    dist = np.sqrt(((rgb.astype(float) - bg) ** 2).sum(axis=2))
+    content = dist > 30
+    bands = clusters(content.sum(axis=1) > img.width * 0.02, min_gap=6, min_size=10)
+    if len(bands) < 2:
+        raise SystemExit(f"expected icon + caption bands, got {len(bands)}")
+    y0, y1 = bands[0]
+    cols = clusters(content[y0:y1 + 1].sum(axis=0) > 2, min_gap=24, min_size=20)
+    if len(cols) != 8:
+        raise SystemExit(f"expected 8 icon clusters, got {len(cols)}")
+    for name, (x0, x1) in zip(ICON_NAMES, cols):
+        crop = img.crop((x0, y0, x1 + 1, y1 + 1))
+        w, h = crop.size
+        for seed in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)):
+            ImageDraw.floodfill(crop, seed, (255, 0, 255), thresh=20)
+        arr = np.array(crop)
+        alpha = np.where((arr == (255, 0, 255)).all(axis=2), 0, 255).astype(np.uint8)
+        ys, xs = np.where(alpha > 0)
+        pad = 2
+        box = (max(xs.min() - pad, 0), max(ys.min() - pad, 0),
+               min(xs.max() + pad + 1, w), min(ys.max() + pad + 1, h))
+        out = np.dstack([arr[box[1]:box[3], box[0]:box[2]], alpha[box[1]:box[3], box[0]:box[2]]])
+        icon = Image.fromarray(out.astype(np.uint8), "RGBA")
+        th = 96
+        icon = icon.resize((int(icon.width * th / icon.height), th), Image.LANCZOS)
+        save_flat_rgba(icon, OUT_ICONS / f"{name}.png")
+
+
+def publish_docs_icons() -> None:
+    docs = ROOT / "docs" / "assets" / "icons"
+    docs.mkdir(parents=True, exist_ok=True)
+    for name in ICON_NAMES:
+        shutil.copyfile(OUT_ICONS / f"{name}.png", docs / f"{name}.png")
+    print(f"  docs/assets/icons/  ({len(ICON_NAMES)} icons)")
+
+
 def slice_transparent_lockup(path: Path) -> None:
     """Split the 2026-11 transparent RGBA lockup (blade emblem + wordmark).
 
@@ -279,11 +326,13 @@ def main() -> int:
     for out in (OUT_LOGO, OUT_ICONS, OUT_ILLUS):
         out.mkdir(parents=True, exist_ok=True)
     slice_brand_sheet(SRC / "sheet-brand.jpeg")
+    slice_glossy_icons(SRC / "sheet-icons-glossy.png")
     slice_spec_sheet(SRC / "sheet-logo-specs.jpeg")
     slice_transparent_lockup(SRC / "sheet-lockup-2026-11.png")
     build_lockup()
     build_blades_loop(SRC / "blades-rotating-clockwise.mp4")
     publish_docs_logo()
+    publish_docs_icons()
     return 0
 
 
