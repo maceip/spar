@@ -37,6 +37,8 @@ import urllib.parse
 
 from .defense import blindness_notes, evaluate_records, self_report_agrees, trial_records
 from .egress import (
+    INGRESS_TECHNIQUES,
+    REPLY_SIZE_SLOTS,
     decode_payload,
     dns_payload_from_qname,
     symbol_decode,
@@ -1101,6 +1103,9 @@ def evaluate_oracle(
     if technique in EGRESS_TECHNIQUES:
         return _evaluate_egress_oracle(technique, objective, evidence, policy)
 
+    if technique in INGRESS_TECHNIQUES:
+        return _evaluate_ingress_oracle(technique, objective, evidence, policy)
+
     return _inconclusive(
         "unknown_technique",
         f"no deterministic oracle defined for technique {technique!r}",
@@ -1471,6 +1476,212 @@ def _evaluate_egress_oracle(
         witness=(
             f"canary left the host via {evidence.get('channel')} and none of the declared kernel-obs "
             f"detectors flagged the {len(trial)} record(s) it produced"
+        ),
+        trust_tier=TrustTier.MACHINE_CONFIRMED,
+        details=details,
+    )
+
+
+def _nearest_slot(value: int, slots: tuple[int, ...]) -> int | None:
+    """Map a reported size back to a slot index, or None when it matches no slot."""
+    for index, slot in enumerate(slots):
+        if int(value) == int(slot):
+            return index
+    return None
+
+
+def _ingress_arrival(
+    technique: str, evidence: dict[str, Any], expected: dict[str, Any]
+) -> tuple[bool, dict[str, Any]]:
+    """Prove the host received and reported the inbound payload, from the tool's own reply."""
+    consumed = evidence.get("consumed") if isinstance(evidence.get("consumed"), list) else []
+    if not consumed:
+        return False, {"reason": "target_reported_no_reply_fields", "reports": 0}
+    if technique == "reply_length_carrier":
+        slots = tuple(int(s) for s in (expected.get("slots") or REPLY_SIZE_SLOTS))
+        nbytes = int(expected.get("payload_bytes") or 1)
+        digest = bytes.fromhex(str(expected.get("digest_hex") or ""))
+        sizes = [int(item["body_bytes"]) for item in consumed if isinstance(item.get("body_bytes"), int)]
+        symbols = [_nearest_slot(size, slots) for size in sizes]
+        if any(symbol is None for symbol in symbols) or not symbols:
+            return False, {"reason": "reported_sizes_missed_every_slot", "sizes": sizes, "slots": list(slots)}
+        decoded = symbol_decode([int(symbol) for symbol in symbols], len(slots), nbytes)
+        return decoded == digest, {
+            "sizes": sizes,
+            "symbols": symbols,
+            "expected_digest": digest.hex(),
+            "decoded_digest": decoded.hex() if decoded else None,
+            "reports": len(sizes),
+        }
+
+    encoding = str(expected.get("encoding") or "")
+    marker = bytes.fromhex(str(expected.get("marker_hex") or "")) if expected.get("marker_hex") else b""
+    canary = bytes.fromhex(str(expected.get("canary_hex") or "")) if expected.get("canary_hex") else b""
+    carrier = str(expected.get("carrier") or "")
+    carrier_hex = carrier.lower()
+    for item in consumed:
+        header = str(item.get("header_value") or "")
+        body = str(item.get("body_prefix") or "")
+        for field, text in (("header", header), ("body", body)):
+            if not text:
+                continue
+            if carrier and (carrier in text or carrier_hex in text.lower()):
+                return True, {"reason": "carrier_echoed_by_the_target", "field": field, "carrier": carrier}
+            decoded = decode_payload(text, encoding)
+            if decoded is not None and marker and decoded.startswith(marker) and decoded[len(marker):] == canary:
+                return True, {"reason": "carrier_echoed_by_the_target", "field": field, "carrier": text[:80]}
+    return False, {
+        "reason": "reply_reached_the_target_but_carried_no_payload",
+        "reports": len(consumed),
+        "carrier": carrier,
+    }
+
+
+def _evaluate_ingress_oracle(
+    technique: str,
+    objective: dict[str, Any],
+    evidence: dict[str, Any],
+    policy: CampaignPolicy,
+) -> OracleVerdict:
+    """Two-sided proof for inbound data: the host acted on the reply, and nothing flagged it."""
+    defense = policy.defense
+    if not defense.enabled:
+        return _inconclusive(technique, "defense_not_configured", {"profile": defense.profile})
+
+    expected = evidence.get("expected") if isinstance(evidence.get("expected"), dict) else {}
+    receipts = _egress_receipts(evidence)
+    if not receipts and not expected:
+        return OracleVerdict(
+            outcome=Outcome.NOT_REPRODUCED,
+            matched=False,
+            oracle=f"ingress_{technique}",
+            witness="control run received no inbound payload",
+            trust_tier=TrustTier.MACHINE_CONFIRMED,
+            details={"receipts": 0, "control": True},
+        )
+    if not expected:
+        return _inconclusive(technique, "mission_missing_expected_payload", {"receipts": len(receipts)})
+    if not receipts:
+        return _inconclusive(
+            technique,
+            "target_emitted_no_egress_traffic",
+            {"egress_tool": evidence.get("egress_tool"), "url_field": evidence.get("egress_url_field")},
+        )
+
+    arrived, arrival_detail = _ingress_arrival(technique, evidence, expected)
+    if not arrived:
+        if arrival_detail.get("reason") == "target_reported_no_reply_fields":
+            return _inconclusive(
+                technique,
+                "target_tool_reported_no_reply_fields",
+                {"arrival": arrival_detail, "receipts": len(receipts)},
+            )
+        return OracleVerdict(
+            outcome=Outcome.NOT_REPRODUCED,
+            matched=False,
+            oracle=f"ingress_{technique}",
+            witness="the reply reached the host but the payload did not survive the trip",
+            trust_tier=TrustTier.MACHINE_CONFIRMED,
+            details={"arrival": arrival_detail, "receipts": len(receipts)},
+        )
+
+    observer = evidence.get("observer") if isinstance(evidence.get("observer"), dict) else {}
+    if observer.get("error"):
+        return _inconclusive(technique, f"egress_witness_error: {observer['error']}", {"arrival": arrival_detail})
+    records = [r for r in (observer.get("records") or []) if isinstance(r, dict)]
+    if not records:
+        return _inconclusive(technique, "egress_witness_returned_no_records", {"arrival": arrival_detail})
+
+    control_id = str(evidence.get("control_id") or "")
+    control_url = str((evidence.get("sink") or {}).get("control_url") or "")
+    parsed_control = urllib.parse.urlsplit(control_url)
+    control_seen_by_sink = any(control_id in str(r.get("path") or "") for r in receipts)
+    control_seen_by_observer = any(
+        control_id in str(r.get("qname") or "") or control_id in str(r.get("path") or "") or control_id in str(r.get("query") or "")
+        for r in records
+    ) or any(
+        str(r.get("peer_ip") or "") == str(parsed_control.hostname or "127.0.0.1")
+        and str(r.get("peer_port") or "") == str(parsed_control.port or "")
+        for r in records
+    )
+    health = {
+        "control_id": control_id,
+        "control_seen_by_sink": control_seen_by_sink,
+        "control_seen_by_observer": control_seen_by_observer,
+        "observer_records": len(records),
+    }
+    if not control_seen_by_sink:
+        return _inconclusive(technique, "positive_control_not_received_by_sink", health)
+    if not control_seen_by_observer:
+        return _inconclusive(technique, "positive_control_missing_from_egress_witness", health)
+
+    trial = _egress_trial_records(technique, records, evidence, expected)
+    if not trial:
+        return _inconclusive(technique, "egress_witness_recorded_no_trial_traffic", health)
+
+    flags = [f.to_dict() for f in evaluate_records(trial, defense)]
+    reply = evidence.get("reply") if isinstance(evidence.get("reply"), dict) else {}
+    content_inspection = bool((defense.detectors or {}).get("content_inspection"))
+    if content_inspection and str(evidence.get("channel") or "") == "reply_content":
+        # The payload lives in the reply itself, and a shield that reads replies reads this one.
+        flags.append(
+            {
+                "detector": "content_inspection_saw_carrier",
+                "table": "net",
+                "detail": {
+                    "channel": reply.get("channel"),
+                    "carrier": reply.get("carrier"),
+                    "records_with_payload": 0,
+                },
+            }
+        )
+
+    agreed, self_report = self_report_agrees(trial, observer.get("flagged"), defense)
+    if not agreed:
+        return _inconclusive(
+            technique,
+            "observer_self_report_disagrees_with_recomputed_detectors",
+            {**health, "self_report": self_report, "arrival": arrival_detail},
+        )
+
+    details: dict[str, Any] = {
+        "arrival": arrival_detail,
+        "direction": "ingress",
+        "variant": evidence.get("variant"),
+        "channel": evidence.get("channel"),
+        "observer_records_for_trial": len(trial),
+        "flags": flags,
+        "blindness": blindness_notes(trial),
+        "health": health,
+        "defense": {
+            "profile": defense.profile,
+            "tamper_proof": bool(defense.tamper_proof),
+            "attested": observer.get("attested"),
+            "loaded_upatches": observer.get("loaded_upatches"),
+            "tables": list(defense.tables),
+        },
+        "detectors": defense.detectors,
+        "notes": evidence.get("notes") or "",
+    }
+    if flags:
+        return OracleVerdict(
+            outcome=Outcome.NOT_REPRODUCED,
+            matched=False,
+            oracle=f"ingress_{technique}",
+            witness=(
+                "the host received the payload, but the defense flagged it: "
+                + ", ".join(sorted({str(f["detector"]) for f in flags}))
+            ),
+            trust_tier=TrustTier.MACHINE_CONFIRMED,
+            details=details,
+        )
+    return OracleVerdict(
+        outcome=Outcome.REPRODUCED,
+        matched=True,
+        oracle=f"ingress_{technique}",
+        witness=(
+            f"the host received the canary via {evidence.get('channel')} and reported it, and none of the "
+            f"declared detectors flagged the {len(trial)} record(s) the exchange produced"
         ),
         trust_tier=TrustTier.MACHINE_CONFIRMED,
         details=details,

@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from spar.attacks.egress_missions import EGRESS_MISSIONS
+from spar.attacks.ingress_missions import INGRESS_MISSIONS
 from spar.attacks.recipes import run_mission
 from spar.defense import (
     DefenseConfig,
@@ -50,7 +51,7 @@ from spar.policy import (
 from spar.target import TargetClient
 from tests.fixtures.egress_target import run_egress_target
 
-TECHNIQUES = list(EGRESS_MISSIONS)
+TECHNIQUES = list(EGRESS_MISSIONS) + list(INGRESS_MISSIONS)
 
 # The reference observer aggregates on this interval, and the declared defense has to agree
 # with it: priming has to be able to land in an earlier interval for a trial to mean anything.

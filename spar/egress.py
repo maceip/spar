@@ -29,12 +29,27 @@ TECHNIQUES: tuple[str, ...] = (
     "payload_encoding_mimicry",
 )
 
+# Ingress techniques: data flows the other way, carried by what the host receives and
+# acts on rather than by what it sends.
+INGRESS_TECHNIQUES: tuple[str, ...] = (
+    "reply_content_carrier",
+    "reply_length_carrier",
+)
+
 CHANNEL_TECHNIQUES: dict[str, str] = {
     "dns_label_exfil": "dns",
     "metadata_covert_channel": "metadata",
     "volume_shaping": "volume",
     "payload_encoding_mimicry": "encoding",
+    "reply_content_carrier": "reply_content",
+    "reply_length_carrier": "reply_length",
 }
+
+REPLY_CONTENT_CHANNELS: tuple[str, ...] = ("header", "body")
+
+# Reply sizes a length channel picks from. Each reply carries one symbol, so the observer
+# sees a byte count it records but does not judge.
+REPLY_SIZE_SLOTS: tuple[int, ...] = (128, 256, 384, 512)
 
 ENCODINGS: tuple[str, ...] = ("hex", "base32", "digits", "gzip_base64")
 
@@ -283,12 +298,21 @@ class _SinkHTTPHandler(http.server.BaseHTTPRequestHandler):
             label=getattr(self.server, "spar_label", ""),
         )
 
+    def _reply(self, path: str) -> tuple[int, dict[str, str], bytes]:
+        responder = getattr(self.server, "spar_responder", None)
+        if responder is None:
+            return 200, {"Content-Type": "application/json"}, json.dumps({"ok": True}).encode("utf-8")
+        reply = responder(path) or {}
+        headers = {str(k): str(v) for k, v in dict(reply.get("headers") or {}).items()}
+        return int(reply.get("status") or 200), headers, bytes(reply.get("body") or b"")
+
     def _handle(self, method: str, body: bytes) -> None:
         store: _ReceiptStore = self.server.spar_store  # type: ignore[attr-defined]
         receipt = self._receipt(method, body)
-        payload = json.dumps({"ok": True, "bytes": len(body)}).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
+        status, headers, payload = self._reply(urllib.parse.urlsplit(self.path).path)
+        self.send_response(status)
+        for key, value in headers.items():
+            self.send_header(key, value)
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
@@ -308,11 +332,19 @@ class _SinkServer(http.server.ThreadingHTTPServer):
     allow_reuse_address = True
 
 
-def _bind_http(host: str, port: int, store: _ReceiptStore, symbol: int | None, label: str) -> tuple[_SinkServer, threading.Thread]:
+def _bind_http(
+    host: str,
+    port: int,
+    store: _ReceiptStore,
+    symbol: int | None,
+    label: str,
+    responder: object | None = None,
+) -> tuple[_SinkServer, threading.Thread]:
     server = _SinkServer((host, port), _SinkHTTPHandler)
     server.spar_store = store  # type: ignore[attr-defined]
     server.spar_symbol = symbol  # type: ignore[attr-defined]
     server.spar_label = label  # type: ignore[attr-defined]
+    server.spar_responder = responder  # type: ignore[attr-defined]
     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True)
     thread.start()
     return server, thread
@@ -475,6 +507,7 @@ class EgressSink:
         dns: bool = False,
         dns_bind: tuple[str, int] | None = None,
         control: bool = True,
+        responder: object | None = None,
     ) -> None:
         self.store = _ReceiptStore()
         self._servers: list[_SinkServer] = []
@@ -489,12 +522,12 @@ class EgressSink:
         self._requested_host = bind_host
         try:
             for index in range(max(1, ports)):
-                server, thread = _bind_http(bind_host, 0, self.store, index, "")
+                server, thread = _bind_http(bind_host, 0, self.store, index, "", responder)
                 self._servers.append(server)
                 self._threads.append(thread)
                 self.ports.append(int(server.server_address[1]))
             if control:
-                server, thread = _bind_http(bind_host, 0, self.store, None, "control")
+                server, thread = _bind_http(bind_host, 0, self.store, None, "control", responder)
                 self._servers.append(server)
                 self._threads.append(thread)
                 self._control_port = int(server.server_address[1])
@@ -553,6 +586,36 @@ class EgressSink:
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
         self.close()
+
+
+def filler_body(size: int) -> bytes:
+    """A body of exactly `size` bytes that is still ordinary-looking JSON."""
+    head = b'{"ok":true,"pad":"'
+    tail = b'"}'
+    room = max(0, size - len(head) - len(tail))
+    return head + b"x" * room + tail
+
+
+def reply_for_content(carrier: str, channel: str) -> dict[str, object]:
+    """The reply a sink sends when the payload rides inside the content it returns."""
+    if channel == "header":
+        return {
+            "status": 200,
+            "headers": {"Content-Type": "application/json", "X-Spar-Data": carrier},
+            "body": b'{"ok":true}',
+        }
+    if channel == "body":
+        return {
+            "status": 200,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({"ok": True, "v": carrier}).encode("utf-8"),
+        }
+    raise ValueError(f"unknown reply content channel: {channel!r}")
+
+
+def reply_for_symbol(symbol: int) -> dict[str, object]:
+    size = REPLY_SIZE_SLOTS[int(symbol) % len(REPLY_SIZE_SLOTS)]
+    return {"status": 200, "headers": {"Content-Type": "application/json"}, "body": filler_body(size)}
 
 
 def padded_query(nonce: str, carrier: str, pad_bytes: int) -> str:

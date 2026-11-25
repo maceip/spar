@@ -167,15 +167,37 @@ class EgressTarget:
         parts = first_line.split(" ")
         if len(parts) >= 2 and parts[1].isdigit():
             status = int(parts[1])
+        reply_headers: dict[str, str] = {}
+        for line in head.split(b"\r\n")[1:]:
+            key, _, value = line.partition(b":")
+            name = key.decode("latin-1", "replace").strip().lower()
+            if name and len(reply_headers) < 8:
+                reply_headers[name] = value.decode("latin-1", "replace").strip()[:120]
+        # What the client actually received and can act on. An ingress channel is only real
+        # if it shows up here, because this is what the tool reports back to the caller.
+        reply = {
+            "status": status,
+            "headers": reply_headers,
+            "body_prefix": body[:160].decode("latin-1", "replace"),
+            "body_bytes": len(body),
+            "address": address,
+        }
         with self.state.lock:
             self._record_net(address, port, len(request), len(response))
             self._log(
                 user,
                 "http_get",
                 {"url": url},
-                {"status": status, "host": host, "bytes_out": len(request), "bytes_in": len(response), "via": "egress"},
+                {
+                    "status": status,
+                    "host": host,
+                    "bytes_out": len(request),
+                    "bytes_in": len(response),
+                    "via": "egress",
+                    "reply": reply,
+                },
             )
-        return {"status": status, "url": url, "host": host, "body_bytes": len(body)}
+        return {"status": status, "url": url, "host": host, "body_bytes": len(body), "reply": reply}
 
     def _resolve(self, host: str) -> str:
         try:

@@ -136,7 +136,15 @@ def _send(ctx: MissionContext, urls: list[str], *, prompt: str, gap_ms: list[int
                     technique=technique,
                     risk_tier="read-only",
                 )
-                step: dict[str, Any] = {"kind": "invoke", "url": url, "status": resp.status, "log_seq": resp.log_seq}
+                step: dict[str, Any] = {
+                    "kind": "invoke",
+                    "url": url,
+                    "status": resp.status,
+                    "log_seq": resp.log_seq,
+                    # What the tool reported back: for an ingress channel this is the proof
+                    # that the host received the reply and surfaced it, not just that we sent it.
+                    "result": resp.data if isinstance(resp.data, (dict, list)) else {},
+                }
                 if isinstance(resp.data, dict) and resp.data.get("error"):
                     # The tool answered and refused: a prevention shield looks exactly like this.
                     step["error"] = f"tool_error: {resp.data['error']}"

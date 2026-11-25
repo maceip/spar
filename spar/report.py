@@ -53,6 +53,8 @@ _HIGH_SEVERITY_TECHNIQUES = frozenset(
         "metadata_covert_channel",
         "volume_shaping",
         "payload_encoding_mimicry",
+        "reply_content_carrier",
+        "reply_length_carrier",
     }
 )
 _MED_SEVERITY_TECHNIQUES = frozenset(
@@ -534,6 +536,8 @@ _EGRESS_TECHNIQUE_ORDER = (
     "metadata_covert_channel",
     "volume_shaping",
     "payload_encoding_mimicry",
+    "reply_content_carrier",
+    "reply_length_carrier",
 )
 
 
@@ -559,7 +563,7 @@ def _egress_section(
     detectors = defense.get("detectors") if isinstance(defense.get("detectors"), dict) else {}
     blind = [str(b) for b in (defense.get("blind_spots") or [])]
     lines = [
-        "## Covert Egress Plane",
+        "## Covert Channel Plane",
         "",
         f"- **Declared Defense Profile**: `{defense.get('profile')}` (tamper-proof: `{bool(defense.get('tamper_proof'))}`)",
         f"- **Observed Tables**: {', '.join(f'`{t}`' for t in (defense.get('tables') or [])) or 'none'}",
@@ -569,8 +573,8 @@ def _egress_section(
         "- **Why this matters**: a shirudo-style observer cannot be unloaded once the host is "
         "attested, so traffic has to look ordinary instead of avoiding the sensor.",
         "",
-        "| Channel Technique | Outcome | Succeeded (k/n) |",
-        "| --- | --- | --- |",
+        "| Channel Technique | Direction | Outcome | Succeeded (k/n) |",
+        "| --- | --- | --- | --- |",
     ]
     for technique in exercised:
         outcome = outcomes[technique]
@@ -578,7 +582,10 @@ def _egress_section(
         outcome_disp = outcome_raw or "not_recorded"
         k_val = int(outcome.get("k", 0) or 0)
         n_val = int(outcome.get("n", 0) or 0)
-        lines.append(f"| `{technique}` | `{redact(outcome_disp, secrets=tuple(secrets))}` | `{k_val}/{n_val}` |")
+        direction = "ingress" if technique.startswith("reply_") else "egress"
+        lines.append(
+            f"| `{technique}` | {direction} | `{redact(outcome_disp, secrets=tuple(secrets))}` | `{k_val}/{n_val}` |"
+        )
     lines.append("")
     return lines
 

@@ -53,6 +53,14 @@ BLIND_SPOTS: dict[str, str] = {
     "timing_not_modelled": (
         "records carry first- and last-seen timestamps but nothing models inter-arrival gaps"
     ),
+    "reply_content_not_recorded": (
+        "a reply is recorded only as a byte count, so a payload inside a response body or "
+        "header is invisible to an on-host metadata export"
+    ),
+    "reply_size_not_judged": (
+        "reply sizes are recorded per interval but judged only against a byte budget, so "
+        "which size a reply is can carry data without any detector noticing"
+    ),
 }
 
 # kernel-obs table -> the fields a consumer receives. Kept small on purpose: this is the
@@ -62,6 +70,7 @@ KERNEL_OBS_TABLES: dict[str, tuple[str, ...]] = {
     "dns": ("qname", "answer", "count", "first_seen", "last_seen", "interval"),
     "watch": ("peer_ip", "attempts", "interval"),
     "socket": ("family", "type", "protocol", "operation", "peer_ip", "peer_port", "interval"),
+    "listen": ("family", "type", "protocol", "peer_port", "backlog", "interval"),
 }
 
 WITNESS_SCHEMA = {
@@ -111,6 +120,9 @@ DEFAULT_DETECTORS: dict[str, Any] = {
         "max_distinct_ports_per_peer": 8,
         "max_requests_per_peer": 30,
         "alert_new_peer": True,
+        # Off by default: host metadata records reply sizes but does not ask what they mean.
+        "alert_on_reply_size_variation": False,
+        "max_distinct_reply_sizes": 8,
     },
     "watch": {"alert_on_hit": True},
     "content_inspection": False,
@@ -372,6 +384,37 @@ def evaluate_records(
                     {"interval": bucket, "peer_ip": peer_ip, "bytes": int(aggregated), "aggregated": True},
                 )
             )
+    # Reply-shape detector: a per-interval observer reports a total per peer and interval, so
+    # the shape signal is how much that total varies between intervals, not the size of any
+    # single reply. Off unless the operator declares it.
+    if net_cfg.get("alert_on_reply_size_variation"):
+        totals: dict[str, dict[float, float]] = {}
+        for record in records:
+            if str(record.get("table")) != "net":
+                continue
+            received = _num(record.get("bytes_in"))
+            if not received:
+                continue
+            peer_ip = str(record.get("peer_ip") or "")
+            interval = _bucket(record, interval_s)
+            peer_totals = totals.setdefault(peer_ip, {})
+            peer_totals[interval] = peer_totals.get(interval, 0.0) + received
+        size_limit = int(_num(net_cfg.get("max_distinct_reply_sizes"), 8))
+        for peer_ip, peer_totals in totals.items():
+            distinct = {round(total) for total in peer_totals.values()}
+            if len(distinct) > size_limit:
+                flags.append(
+                    DetectorFlag(
+                        "net_reply_size_variation",
+                        "net",
+                        {
+                            "peer_ip": peer_ip,
+                            "distinct_interval_totals": len(distinct),
+                            "intervals": len(peer_totals),
+                            "limit": size_limit,
+                        },
+                    )
+                )
     return flags
 
 

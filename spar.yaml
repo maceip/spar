@@ -100,6 +100,10 @@ defense:
   #     max_distinct_ports_per_peer: 8
   #     max_requests_per_peer: 30
   #     alert_new_peer: true
+  #     # Off by default: reply sizes are recorded but not judged, which is what lets a reply-
+  #     # length ingress channel through until an operator declares this detector.
+  #     alert_on_reply_size_variation: false
+  #     max_distinct_reply_sizes: 8
   #   watch:
   #     alert_on_hit: true
 

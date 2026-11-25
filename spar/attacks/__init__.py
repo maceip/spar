@@ -24,15 +24,18 @@ from .pyrit_adapter import (
     ngram_jaccard,
 )
 from .egress_missions import EGRESS_MISSIONS
+from .ingress_missions import INGRESS_MISSIONS
 from .recipes import MISSIONS, MissionContext, MissionResult, make_quote, run_mission
 
 # Covert-egress missions depend on recipes for their context types, so they register here
 # rather than at import time inside recipes.
 MISSIONS.update(EGRESS_MISSIONS)
+MISSIONS.update(INGRESS_MISSIONS)
 
 __all__ = [
     "Base64Converter",
     "EGRESS_MISSIONS",
+    "INGRESS_MISSIONS",
     "BenignReport",
     "BitmapImagePromptConverter",
     "CrescendoAttackLoop",
