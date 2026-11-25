@@ -248,6 +248,64 @@ def slice_glossy_icons(path: Path) -> None:
         save_flat_rgba(icon, OUT_ICONS / f"{name}.png")
 
 
+def build_nav_icon(path: Path) -> None:
+    """Animated top-left nav mark from the transparent app-icon GIF.
+
+    Crops the union content bbox, downscales to 64px (2x of the 32px nav),
+    and re-encodes with one global palette plus a reserved transparent index
+    so the loop stays small and keeps its alpha. Also emits a static first
+    frame for prefers-reduced-motion.
+    """
+    src = Image.open(path)
+    frames = []
+    boxes = []
+    for i in range(src.n_frames):
+        src.seek(i)
+        f = src.convert("RGBA")
+        frames.append(f)
+        a = np.array(f)[:, :, 3]
+        ys, xs = np.where(a > 8)
+        boxes.append((xs.min(), ys.min(), xs.max(), ys.max()))
+    u = (min(b[0] for b in boxes), min(b[1] for b in boxes),
+         max(b[2] for b in boxes), max(b[3] for b in boxes))
+    size = 64
+    small = []
+    for f in frames:
+        c = f.crop(u)
+        c.thumbnail((size, size), Image.LANCZOS)
+        canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        canvas.alpha_composite(c, ((size - c.width) // 2, (size - c.height) // 2))
+        small.append(canvas)
+    stack = np.concatenate([np.array(s)[:, :, :3][np.array(s)[:, :, 3] > 128] for s in small])
+    pal = Image.fromarray(stack.reshape(-1, 1, 3)).convert("P", palette=Image.ADAPTIVE, colors=255)
+    palette = pal.getpalette()
+    palette[255 * 3:255 * 3 + 3] = [0, 0, 0]
+    pal.putpalette(palette)
+    quant = []
+    for s in small:
+        arr = np.array(s)
+        q = np.array(s.convert("RGB").quantize(palette=pal, dither=Image.Dither.NONE))
+        q[arr[:, :, 3] < 128] = 255
+        qi = Image.fromarray(q, "P")
+        qi.putpalette(palette)
+        quant.append(qi)
+    out = OUT_LOGO / "spar-nav.gif"
+    quant[0].save(
+        out, save_all=True, append_images=quant[1:],
+        duration=src.info.get("duration", 100), loop=0,
+        transparency=255, disposal=2,
+    )
+    print(f"  {out.relative_to(ROOT)}  {out.stat().st_size} bytes")
+    save_flat_rgba(small[0], OUT_LOGO / "spar-nav.png")
+
+
+def publish_docs_nav() -> None:
+    docs = ROOT / "docs" / "assets"
+    for name in ("spar-nav.gif", "spar-nav.png"):
+        shutil.copyfile(OUT_LOGO / name, docs / name)
+        print(f"  docs/assets/{name}")
+
+
 def publish_docs_icons() -> None:
     docs = ROOT / "docs" / "assets" / "icons"
     docs.mkdir(parents=True, exist_ok=True)
@@ -331,8 +389,10 @@ def main() -> int:
     slice_transparent_lockup(SRC / "sheet-lockup-2026-11.png")
     build_lockup()
     build_blades_loop(SRC / "blades-rotating-clockwise.mp4")
+    build_nav_icon(SRC / "nav-icon-1124.gif")
     publish_docs_logo()
     publish_docs_icons()
+    publish_docs_nav()
     return 0
 
 

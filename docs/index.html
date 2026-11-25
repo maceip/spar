@@ -475,7 +475,7 @@
 
       <nav class="hero-nav" aria-label="Primary">
         <a class="hero-nav-brand" href="#" aria-label="Spar home">
-          <img class="hero-nav-mark" src="assets/spar-mark.png?v=2" alt="Spar logo" width="32" height="32" />
+          <img class="hero-nav-mark" src="assets/spar-nav.gif" alt="Spar logo" width="32" height="32" />
           <span>Spar</span>
         </a>
         <div class="hero-nav-links">
@@ -749,6 +749,10 @@ spar replay                                      <span class="comment"># re-atta
         var canvas = document.getElementById("sharks-canvas");
         if (canvas && typeof window.mountSparSharks === "function") {
           window.mountSparSharks(canvas);
+        }
+        var navMark = document.querySelector(".hero-nav-mark");
+        if (navMark && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          navMark.src = "assets/spar-nav.png";
         }
         document.querySelectorAll(".copy-btn").forEach(function (btn) {
           btn.addEventListener("click", function () {
