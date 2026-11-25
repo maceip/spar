@@ -7,3 +7,4 @@ spar_tests/
 dist/
 build/
 .DS_Store
+.qwen/
