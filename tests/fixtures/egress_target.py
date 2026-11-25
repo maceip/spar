@@ -105,6 +105,7 @@ class EgressTarget:
         self_report: str = "none",
         interval_s: float = INTERVAL_S,
         watch_list: tuple[str, ...] = (),
+        block_paths: tuple[str, ...] = (),
     ) -> None:
         self.tokens = tokens or {
             "alice": f"egress-{secrets.token_hex(8)}",
@@ -115,6 +116,9 @@ class EgressTarget:
         self.dns_suffix = dns_suffix.strip(".").lower()
         self.dns_resolver = dns_resolver
         self.self_report = self_report
+        # A prevention shield refuses the call outright: the request never leaves the host,
+        # so no telemetry record exists for it and no receipt exists at the sink.
+        self.block_paths = tuple(block_paths)
 
     def token_for(self, name: str) -> str:
         return str(self.state.tokens[name]["token"])
@@ -127,6 +131,16 @@ class EgressTarget:
         path = parsed.path or "/"
         if parsed.query:
             path = f"{path}?{parsed.query}"
+        blocked = next((prefix for prefix in self.block_paths if (parsed.path or "/").startswith(prefix)), "")
+        if blocked:
+            with self.state.lock:
+                self._log(
+                    user,
+                    "http_get",
+                    {"url": url},
+                    {"error": f"blocked by shield on {blocked}", "via": "shield"},
+                )
+            return {"error": f"blocked by shield on {blocked}", "url": url}
         try:
             address = self._resolve(host)
         except OSError as exc:
@@ -418,6 +432,7 @@ def run_egress_target(
     self_report: str = "none",
     interval_s: float = INTERVAL_S,
     watch_list: tuple[str, ...] = (),
+    block_paths: tuple[str, ...] = (),
 ) -> tuple[ThreadingHTTPServer, threading.Thread, int, EgressTarget]:
     target = EgressTarget(
         tokens=tokens,
@@ -426,6 +441,7 @@ def run_egress_target(
         self_report=self_report,
         interval_s=interval_s,
         watch_list=watch_list,
+        block_paths=block_paths,
     )
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
     server.daemon_threads = True

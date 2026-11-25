@@ -124,7 +124,13 @@ def _defense(**overrides: Any) -> dict[str, Any]:
     return block
 
 
-def _make_env(tmp_path: Path, *, defense: dict[str, Any], self_report: str = "none") -> Iterator[EgressEnv]:
+def _make_env(
+    tmp_path: Path,
+    *,
+    defense: dict[str, Any],
+    self_report: str = "none",
+    block_paths: tuple[str, ...] = (),
+) -> Iterator[EgressEnv]:
     resolver_port = _free_udp_port()
     tokens = {"alice": f"tok-{secrets.token_hex(6)}", "bob": f"tok-{secrets.token_hex(6)}", "auditor": f"tok-{secrets.token_hex(6)}"}
     server, _thread, port, target = run_egress_target(
@@ -133,6 +139,7 @@ def _make_env(tmp_path: Path, *, defense: dict[str, Any], self_report: str = "no
         dns_resolver=("127.0.0.1", resolver_port),
         self_report=self_report,
         interval_s=OBSERVER_INTERVAL_S,
+        block_paths=block_paths,
     )
     base_url = f"http://127.0.0.1:{port}"
     contract = TargetContractConfig.from_dict(
@@ -448,6 +455,22 @@ def test_observer_self_report_disagreement_blocks_the_verdict(tmp_path: Path) ->
         _mission, verdict = env.trial("volume_shaping", trial=1)
         assert verdict.outcome is Outcome.INCONCLUSIVE
         assert "self_report" in verdict.witness
+
+
+def test_prevention_shield_is_caught_and_not_called_evasion(tmp_path: Path) -> None:
+    """A shield that refuses the call means the payload really never left the host.
+
+    Shirudo ships prevention shields as well as detection ones. When one refuses the fetch,
+    the sink receives the control request but not the carrier, and that is a held defense --
+    not the "never tried" ambiguity that has to stay inconclusive.
+    """
+    for env in _make_env(tmp_path, defense=_defense(), block_paths=("/v1/metrics",)):
+        mission, verdict = env.trial("payload_encoding_mimicry", trial=0)
+        assert mission.evidence["receipt_count"] > 0, "the positive control still has to arrive"
+        assert mission.evidence["step_errors"], "the refusal is recorded, not swallowed"
+        assert verdict.details["arrival"]["reason"] == "no_carrier_receipts"
+        assert verdict.outcome is Outcome.NOT_REPRODUCED
+        assert "never" in verdict.witness
 
 
 # --------------------------------------------------------------------------------------

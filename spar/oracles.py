@@ -1149,6 +1149,8 @@ def _arrival_dns(evidence: dict[str, Any], expected: dict[str, Any]) -> tuple[by
         (r for r in _egress_receipts(evidence) if str(r.get("kind")) == "dns"),
         key=lambda r: float(r.get("ts") or 0.0),
     )
+    if not receipts:
+        return None, {"reason": "no_carrier_receipts", "question_names_answered": [], "count": 0}
     payload = b""
     names: list[str] = []
     for receipt in receipts:
@@ -1169,6 +1171,8 @@ def _arrival_symbols(evidence: dict[str, Any], expected: dict[str, Any]) -> tupl
         key=lambda r: float(r.get("ts") or 0.0),
     )
     channel = str((evidence.get("variant") or {}).get("channel") or "")
+    if not receipts:
+        return None, {"reason": "no_carrier_receipts", "requests": 0}
     if channel == "timing":
         stamps = [float(r.get("ts") or 0.0) for r in receipts]
         gaps = [round((stamps[i + 1] - stamps[i]) * 1000.0, 1) for i in range(len(stamps) - 1)]
@@ -1195,6 +1199,8 @@ def _arrival_payload(evidence: dict[str, Any], expected: dict[str, Any]) -> tupl
         _carrier_receipts(_egress_receipts(evidence)),
         key=lambda r: float(r.get("ts") or 0.0),
     )
+    if not receipts:
+        return None, {"reason": "no_carrier_receipts", "chunks": 0}
     if technique == "volume":
         params = [_query_params(r) for r in receipts]
         chunks = [(int(p.get("i", 0)), p.get("d", "")) for p in params if "d" in p]
@@ -1229,7 +1235,8 @@ def _egress_arrival(
     else:
         payload, detail = _arrival_payload(evidence, expected)
     if payload is None:
-        return False, {**detail, "reason": "carrier_did_not_decode"}
+        # Keep the specific reason (nothing arrived at all vs. arrived but undecodable).
+        return False, {**detail, "reason": str(detail.get("reason") or "carrier_did_not_decode")}
     if marker and not payload.startswith(marker):
         return False, {**detail, "reason": "marker_mismatch", "decoded_hex": payload.hex()}
     body = payload[len(marker):] if marker else payload
@@ -1326,6 +1333,23 @@ def _evaluate_egress_oracle(
         )
 
     arrived, arrival_detail = _egress_arrival(technique, evidence, expected)
+    if not arrived and arrival_detail.get("reason") == "no_carrier_receipts":
+        return OracleVerdict(
+            outcome=Outcome.NOT_REPRODUCED,
+            matched=False,
+            oracle=f"egress_{technique}",
+            witness=(
+                "no carrier request reached the operator-owned sink, so the payload never left "
+                "the host (a prevention shield, or a refused fetch)"
+            ),
+            trust_tier=TrustTier.MACHINE_CONFIRMED,
+            details={
+                "arrival": arrival_detail,
+                "receipts": len(receipts),
+                "step_errors": evidence.get("step_errors") or [],
+                "step_failures": evidence.get("step_failures") or [],
+            },
+        )
     if not arrived and arrival_detail.get("reason") == "carrier_did_not_decode":
         channel = str(evidence.get("channel") or "")
         if channel.endswith("timing"):

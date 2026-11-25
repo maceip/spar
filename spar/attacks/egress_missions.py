@@ -137,7 +137,11 @@ def _send(ctx: MissionContext, urls: list[str], *, prompt: str, gap_ms: list[int
                     technique=technique,
                     risk_tier="read-only",
                 )
-                steps.append({"kind": "invoke", "url": url, "status": resp.status, "log_seq": resp.log_seq})
+                step: dict[str, Any] = {"kind": "invoke", "url": url, "status": resp.status, "log_seq": resp.log_seq}
+                if isinstance(resp.data, dict) and resp.data.get("error"):
+                    # The tool answered and refused: a prevention shield looks exactly like this.
+                    step["error"] = f"tool_error: {resp.data['error']}"
+                steps.append(step)
             except Exception as exc:  # noqa: BLE001
                 steps.append({"kind": "invoke", "url": url, "error": type(exc).__name__})
                 break
@@ -271,6 +275,12 @@ def _finish(
         },
         "egress_tool": _route(ctx).tool,
         "egress_url_field": _route(ctx).url_field,
+        "step_errors": [str(s.get("error")) for s in steps if s.get("error")],
+        "step_failures": [
+            {"url": s.get("url") or s.get("urls"), "error": s.get("error")}
+            for s in steps
+            if s.get("error")
+        ],
         "resolver_bound": bool(extra.pop("resolver_bound", True)) if extra else True,
     }
     evidence.update(extra or {})
