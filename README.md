@@ -28,6 +28,15 @@ spar demo
 - **Shared memory poisoning** — Planting hidden instructions in memory so a different user's later chat leaks data.
 - **Hidden prompt injections** — Sneaking commands inside shared documents, images, non-English messages, or connected tools.
 - **False completions** — Catching an AI that claims it deleted or updated a record when no tool ever ran.
+- **Covert egress** — Deliberately hiding a canary from a host observability defense
+  ([shirudo](https://github.com/shirudo-dev/shirudo)-style signed kernel-obs telemetry) by
+  moving it into DNS question names, connection metadata, request pacing, or an encoded query
+  parameter on an already-known peer. A finding needs both halves: the canary really arrived at
+  a collector Spar owns, and none of the declared detectors flagged the records the observer
+  exported. If the observer is silent, stale, or disagrees with Spar's own recomputation of its
+  detectors, the verdict is inconclusive rather than either verdict. See `defense:` in
+  [spar.yaml](spar.yaml) — the profile is `none` by default, so no egress objective is planned
+  until you declare the observer you are testing against.
 
 ## How it works
 

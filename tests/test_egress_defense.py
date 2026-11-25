@@ -21,7 +21,6 @@ from spar.attacks.recipes import run_mission
 from spar.defense import (
     DefenseConfig,
     blindness_notes,
-    decode_from_dns_records,
     evaluate_records,
     self_report_agrees,
     shannon_bits_per_char,
@@ -29,7 +28,6 @@ from spar.defense import (
 import socket
 
 from spar.egress import (
-    EgressSink,
     carrier_digest,
     decode_payload,
     dns_payload_from_qname,
@@ -39,8 +37,7 @@ from spar.egress import (
     symbol_encode,
     timing_decode,
 )
-from spar.guard import Budget, GuardViolation, KillSwitch
-from spar.guard import GuardedHTTPClient
+from spar.guard import Budget, GuardedHTTPClient, KillSwitch
 from spar.ledger import Ledger
 from spar.loop import run_campaign
 from spar.oracles import Outcome, evaluate_oracle

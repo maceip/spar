@@ -37,7 +37,6 @@ import urllib.parse
 
 from .defense import blindness_notes, evaluate_records, self_report_agrees, trial_records
 from .egress import (
-    carrier_digest,
     decode_payload,
     dns_payload_from_qname,
     symbol_decode,

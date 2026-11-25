@@ -26,8 +26,7 @@ from ..egress import (
     encode_payload,
     symbol_encode,
 )
-from ..target import TargetClient, TargetResponse
-from .recipes import MissionContext, MissionResult, make_quote
+from .recipes import MissionContext, MissionResult
 
 _NONCE_RE = ("-", "_")
 
