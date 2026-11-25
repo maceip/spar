@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import math
 import secrets
 import socket
 import threading
@@ -49,15 +50,23 @@ class EgressState:
     dns: dict[tuple[float, str], dict[str, Any]] = field(default_factory=dict)
     watch: dict[tuple[float, str], dict[str, Any]] = field(default_factory=dict)
     seen_peers: set[tuple[str, int]] = field(default_factory=set)
+    interval_s: float = INTERVAL_S
+    watch_list: tuple[str, ...] = ()
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     @classmethod
-    def seeded(cls, tokens: dict[str, str]) -> "EgressState":
+    def seeded(
+        cls,
+        tokens: dict[str, str],
+        *,
+        interval_s: float = INTERVAL_S,
+        watch_list: tuple[str, ...] = (),
+    ) -> "EgressState":
         accounts = {
             name: {"name": name, "role": "auditor" if name == "auditor" else "user", "token": token}
             for name, token in tokens.items()
         }
-        return cls(tokens=accounts)
+        return cls(tokens=accounts, interval_s=interval_s, watch_list=watch_list)
 
     def auth(self, header: str | None) -> dict[str, str] | None:
         if not header:
@@ -69,8 +78,15 @@ class EgressState:
         return None
 
 
-def _interval(now: float) -> float:
-    return round(now / INTERVAL_S) * INTERVAL_S
+def _interval(now: float, interval_s: float = INTERVAL_S) -> float:
+    """Start of the observation interval a timestamp falls in.
+
+    Intervals are floored, not rounded to the nearest boundary: a per-interval delta
+    observer reports what it saw inside one interval, so two requests that straddle a
+    boundary land in different records. Rounding would let priming hide inside the same
+    record as the traffic it was meant to prepare.
+    """
+    return math.floor(now / interval_s) * interval_s
 
 
 def _encode_request(method: str, path: str, host: str, extra: dict[str, str]) -> bytes:
@@ -87,13 +103,15 @@ class EgressTarget:
         dns_suffix: str = "telemetry.example",
         dns_resolver: tuple[str, int] | None = None,
         self_report: str = "none",
+        interval_s: float = INTERVAL_S,
+        watch_list: tuple[str, ...] = (),
     ) -> None:
         self.tokens = tokens or {
             "alice": f"egress-{secrets.token_hex(8)}",
             "bob": f"egress-{secrets.token_hex(8)}",
             "auditor": f"egress-{secrets.token_hex(8)}",
         }
-        self.state = EgressState.seeded(self.tokens)
+        self.state = EgressState.seeded(self.tokens, interval_s=interval_s, watch_list=watch_list)
         self.dns_suffix = dns_suffix.strip(".").lower()
         self.dns_resolver = dns_resolver
         self.self_report = self_report
@@ -164,7 +182,7 @@ class EgressTarget:
 
     def _record_dns(self, qname: str, answer: str) -> None:
         now = time.time()
-        key = (_interval(now), answer)
+        key = (_interval(now, self.state.interval_s), answer)
         record = self.state.dns.get(key)
         if record is None:
             record = {"table": "dns", "answer": answer, "names": [], "interval": key[0], "truncated": 0, "count": 0}
@@ -179,7 +197,19 @@ class EgressTarget:
 
     def _record_net(self, peer_ip: str, peer_port: int, bytes_out: int, bytes_in: int) -> None:
         now = time.time()
-        key = (_interval(now), peer_ip, int(peer_port))
+        if peer_ip in self.state.watch_list:
+            watch_key = (_interval(now, self.state.interval_s), peer_ip)
+            watch = self.state.watch.get(watch_key)
+            if watch is None:
+                watch = {
+                    "table": "watch",
+                    "peer_ip": peer_ip,
+                    "attempts": 0,
+                    "interval": watch_key[0],
+                }
+                self.state.watch[watch_key] = watch
+            watch["attempts"] += 1
+        key = (_interval(now, self.state.interval_s), peer_ip, int(peer_port))
         record = self.state.net.get(key)
         if record is None:
             record = {
@@ -327,7 +357,7 @@ class _Handler(BaseHTTPRequestHandler):
         target: EgressTarget = self.server.egress_target  # type: ignore[attr-defined]
         path = urllib.parse.urlsplit(self.path).path
         if path == "/version":
-            self._send(200, {"agent": AGENT_NAME, "interval_s": INTERVAL_S})
+            self._send(200, {"agent": AGENT_NAME, "interval_s": target.state.interval_s})
             return
         user = self._user()
         if user is None:
@@ -386,8 +416,17 @@ def run_egress_target(
     dns_suffix: str = "telemetry.example",
     dns_resolver: tuple[str, int] | None = None,
     self_report: str = "none",
+    interval_s: float = INTERVAL_S,
+    watch_list: tuple[str, ...] = (),
 ) -> tuple[ThreadingHTTPServer, threading.Thread, int, EgressTarget]:
-    target = EgressTarget(tokens=tokens, dns_suffix=dns_suffix, dns_resolver=dns_resolver, self_report=self_report)
+    target = EgressTarget(
+        tokens=tokens,
+        dns_suffix=dns_suffix,
+        dns_resolver=dns_resolver,
+        self_report=self_report,
+        interval_s=interval_s,
+        watch_list=watch_list,
+    )
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
     server.daemon_threads = True
     server.egress_target = target  # type: ignore[attr-defined]

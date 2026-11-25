@@ -1518,6 +1518,7 @@ def build_plan(
         },
         "surfaces": dict(recon.get("surfaces") or {"claims": [], "dropped_ungrounded_count": 0}),
         "objectives": objectives,
+        "defense": policy.defense.to_dict(),
         "planner_notes": planner_notes,
     }
 

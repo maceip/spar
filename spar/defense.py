@@ -234,7 +234,12 @@ def _num(value: Any, default: float = 0.0) -> float:
 
 
 def _bucket(record: dict[str, Any], interval_s: float) -> float:
-    return round(_num(record.get("interval"), 0.0) / interval_s) * interval_s
+    """Group records by the observation interval they belong to.
+
+    Floored, matching how a per-interval delta observer buckets: a request that straddles
+    a boundary belongs to the interval it started in, never to the one it brushed against.
+    """
+    return math.floor(_num(record.get("interval"), 0.0) / interval_s) * interval_s
 
 
 @dataclass

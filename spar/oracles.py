@@ -28,6 +28,7 @@ import hashlib
 import http.client
 import inspect
 import json
+import math
 import re
 import secrets
 import time
@@ -1235,6 +1236,22 @@ def _egress_arrival(
     return body == canary, {**detail, "canary_match": body == canary, "decoded_hex": payload.hex()}
 
 
+def _in_carrier_window(records: list[dict[str, Any]], evidence: dict[str, Any]) -> list[dict[str, Any]]:
+    """Drop records from intervals before the carrier exchange started.
+
+    Priming traffic exists to make the peer ordinary, and it is deliberately sent in an
+    earlier observation interval. Evaluating those records would charge the trial for the
+    new-peer alert its own priming was meant to absorb.
+    """
+    window = evidence.get("carrier_window") if isinstance(evidence.get("carrier_window"), dict) else {}
+    start = _num_or(window.get("start"), 0.0)
+    interval_s = _num_or(window.get("interval_s"), 0.0)
+    if start <= 0.0 or interval_s <= 0.0:
+        return records
+    first_interval = math.floor(start / interval_s) * interval_s
+    return [r for r in records if _num_or(r.get("interval"), 0.0) >= first_interval]
+
+
 def _egress_trial_records(
     technique: str,
     records: list[dict[str, Any]],
@@ -1245,6 +1262,7 @@ def _egress_trial_records(
     host = str(urllib.parse.urlsplit(str(sink.get("url") or "")).hostname or "127.0.0.1")
     sink_hosts = (host,)
     nonce = str(evidence.get("nonce") or "")
+    records = _in_carrier_window(records, evidence)
     if technique == "dns_label_exfil":
         suffix = str(expected.get("suffix") or "")
         qnames = {str(q) for q in (expected.get("qnames") or [])}
@@ -1286,10 +1304,20 @@ def _evaluate_egress_oracle(
         return _inconclusive(technique, "defense_not_configured", {"profile": defense.profile})
 
     expected = evidence.get("expected") if isinstance(evidence.get("expected"), dict) else {}
-    if not expected:
-        return _inconclusive(technique, "mission_missing_expected_payload")
-
     receipts = _egress_receipts(evidence)
+    if not receipts and not expected:
+        # The critic's control refutation executes no attack at all. With nothing sent, no
+        # egress can have arrived, so the control is clean rather than inconclusive.
+        return OracleVerdict(
+            outcome=Outcome.NOT_REPRODUCED,
+            matched=False,
+            oracle=f"egress_{technique}",
+            witness="control run sent no egress traffic",
+            trust_tier=TrustTier.MACHINE_CONFIRMED,
+            details={"receipts": 0, "control": True},
+        )
+    if not expected:
+        return _inconclusive(technique, "mission_missing_expected_payload", {"receipts": len(receipts)})
     if not receipts:
         return _inconclusive(
             technique,

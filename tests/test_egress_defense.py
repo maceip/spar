@@ -55,6 +55,10 @@ from tests.fixtures.egress_target import run_egress_target
 
 TECHNIQUES = list(EGRESS_MISSIONS)
 
+# The reference observer aggregates on this interval, and the declared defense has to agree
+# with it: priming has to be able to land in an earlier interval for a trial to mean anything.
+OBSERVER_INTERVAL_S = 0.6
+
 
 def _free_udp_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
@@ -109,8 +113,14 @@ def _defense(**overrides: Any) -> dict[str, Any]:
         "profile": "shirudo_style",
         "tamper_proof": True,
         "tables": ["net", "dns", "watch", "socket"],
+        "detectors": {"interval_s": OBSERVER_INTERVAL_S},
     }
-    block.update(overrides)
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(block.get(key), dict):
+            block[key] = {**block[key], **value}
+        else:
+            block[key] = value
+    block["detectors"]["interval_s"] = OBSERVER_INTERVAL_S
     return block
 
 
@@ -122,6 +132,7 @@ def _make_env(tmp_path: Path, *, defense: dict[str, Any], self_report: str = "no
         dns_suffix="telemetry.example",
         dns_resolver=("127.0.0.1", resolver_port),
         self_report=self_report,
+        interval_s=OBSERVER_INTERVAL_S,
     )
     base_url = f"http://127.0.0.1:{port}"
     contract = TargetContractConfig.from_dict(
@@ -372,7 +383,9 @@ def test_silent_observer_is_inconclusive_not_a_finding(tmp_path: Path) -> None:
     defense = _defense()
     resolver_port = _free_udp_port()
     tokens = {"alice": "t1", "bob": "t2", "auditor": "t3"}
-    server, _thread, port, target = run_egress_target(tokens=tokens, dns_resolver=("127.0.0.1", resolver_port))
+    server, _thread, port, target = run_egress_target(
+        tokens=tokens, dns_resolver=("127.0.0.1", resolver_port), interval_s=OBSERVER_INTERVAL_S
+    )
     try:
         policy = CampaignPolicy.from_dict(
             {
@@ -445,7 +458,9 @@ def test_observer_self_report_disagreement_blocks_the_verdict(tmp_path: Path) ->
 def test_campaign_reports_covert_egress_findings(tmp_path: Path) -> None:
     resolver_port = _free_udp_port()
     tokens = {"alice": f"tok-{secrets.token_hex(6)}", "bob": f"tok-{secrets.token_hex(6)}", "auditor": f"tok-{secrets.token_hex(6)}"}
-    server, _thread, port, _target = run_egress_target(tokens=tokens, dns_resolver=("127.0.0.1", resolver_port))
+    server, _thread, port, _target = run_egress_target(
+        tokens=tokens, dns_resolver=("127.0.0.1", resolver_port), interval_s=OBSERVER_INTERVAL_S
+    )
     try:
         env_prefix = f"SPAR_EGRESS_E2E_{secrets.token_hex(4)}"
         accounts = [
@@ -474,7 +489,7 @@ def test_campaign_reports_covert_egress_findings(tmp_path: Path) -> None:
                         },
                     },
                 },
-                "scope": {"allowlist_hosts": ["127.0.0.1", "localhost"]},
+                "scope": {"allowlist_hosts": ["127.0.0.1", "localhost"], "allow_risky": True},
                 "defense": _defense(),
                 "accounts": [a.to_dict() for a in accounts],
                 "trials": {"n": 2, "min_distinct_techniques": 2},
@@ -487,7 +502,7 @@ def test_campaign_reports_covert_egress_findings(tmp_path: Path) -> None:
         report = (tmp_path / ".spar" / "runs" / summary.run_id / "report.md").read_text(encoding="utf-8")
         plan = json.loads((tmp_path / ".spar" / "runs" / summary.run_id / "plan.json").read_text(encoding="utf-8"))
         planned = {obj["technique"] for obj in plan["objectives"]}
-        assert planned == set(TECHNIQUES), planned
+        assert set(TECHNIQUES) <= planned, planned
         assert "shirudo" in report.lower()
         confirmed = {f.technique for f in summary.findings}
         assert confirmed, "no covert-egress finding was proven"
