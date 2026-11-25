@@ -1,0 +1,154 @@
+name: Release Instant MCP Server Binaries
+
+on:
+  push:
+    tags:
+      - "v*"
+    branches:
+      - "main"
+    paths:
+      - "spar/**"
+      - "pyproject.toml"
+      - "scripts/build_mcp_binary.py"
+      - ".github/workflows/release-mcp.yml"
+  pull_request:
+    paths:
+      - "spar/**"
+      - "pyproject.toml"
+      - "scripts/build_mcp_binary.py"
+      - ".github/workflows/release-mcp.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-mcp-binary:
+    name: Build ${{ matrix.artifact_name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            artifact_name: spar-mcp-darwin-arm64
+            ext: ""
+          - os: ubuntu-latest
+            artifact_name: spar-mcp-linux-x64
+            ext: ""
+          - os: windows-latest
+            artifact_name: spar-mcp-windows-x64
+            ext: ".exe"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Spar and PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]" pyinstaller
+
+      - name: Bundle standalone MCP server executable
+        run: |
+          python scripts/build_mcp_binary.py --output-name "${{ matrix.artifact_name }}" --dist-dir dist
+
+      - name: Smoke-test standalone executable (isolated outside repo)
+        shell: python
+        run: |
+          import json, os, subprocess, tempfile
+          from pathlib import Path
+
+          bin_path = (Path("dist") / "${{ matrix.artifact_name }}${{ matrix.ext }}").resolve()
+          assert bin_path.is_file(), f"Missing binary: {bin_path}"
+
+          with tempfile.TemporaryDirectory() as tmp:
+              env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+
+              # 1. --version
+              r_ver = subprocess.run([str(bin_path), "--version"], cwd=tmp, env=env, capture_output=True, text=True, check=True)
+              print("version:", r_ver.stdout.strip())
+              assert "spar-mcp" in r_ver.stdout
+
+              # 2. --self-test (MCP initialize + ping + tools/list)
+              r_st = subprocess.run([str(bin_path), "--self-test"], cwd=tmp, env=env, capture_output=True, text=True, check=True)
+              print("self-test:", r_st.stdout.strip())
+              assert "self-test PASS" in r_st.stdout
+
+              # 3. Live stdio JSON-RPC MCP tool call: spar_demo (trials=1)
+              spar_dir = str(Path(tmp) / "mcp-spar")
+              payload = "\n".join([
+                  json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-03-26"}}),
+                  json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+                  json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "spar_demo", "arguments": {"trials": 1, "spar_dir": spar_dir}}}),
+              ]) + "\n"
+              r_mcp = subprocess.run(
+                  [str(bin_path)],
+                  input=payload,
+                  cwd=tmp,
+                  env=env,
+                  capture_output=True,
+                  text=True,
+                  timeout=180,
+                  check=True,
+              )
+              lines = [json.loads(line) for line in r_mcp.stdout.splitlines() if line.strip()]
+              assert len(lines) == 2, f"Expected 2 JSON-RPC responses, got {len(lines)}"
+              tool_res = lines[1]["result"]
+              assert tool_res["isError"] is False, f"spar_demo tool failed: {tool_res}"
+              structured = tool_res["structuredContent"]
+              assert structured["integrity_passed"] is True
+              assert structured["findings_count"] >= 5, f"Expected proven findings, got {structured}"
+              print(f"Live MCP spar_demo PASS: {structured['findings_count']} findings, outcome={structured['overall_outcome']}")
+
+      - name: Upload standalone executable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            dist/${{ matrix.artifact_name }}${{ matrix.ext }}
+            dist/${{ matrix.artifact_name }}${{ matrix.ext }}.sha256
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: build-mcp-binary
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all platform binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Build combined SHA256SUMS.txt and MCP config snippet
+        run: |
+          cd release-assets
+          cat *.sha256 | sort > SHA256SUMS.txt
+          cat <<'JSON' > mcp-config.example.json
+          {
+            "mcpServers": {
+              "spar": {
+                "command": "/absolute/path/to/spar-mcp-darwin-arm64"
+              }
+            }
+          }
+          JSON
+          ls -lh
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            release-assets/spar-mcp-darwin-arm64
+            release-assets/spar-mcp-linux-x64
+            release-assets/spar-mcp-windows-x64.exe
+            release-assets/SHA256SUMS.txt
+            release-assets/mcp-config.example.json

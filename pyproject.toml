@@ -23,6 +23,7 @@ eval = ["agentdojo", "openai>=1.0"]
 
 [project.scripts]
 spar = "spar.cli:main"
+spar-mcp = "spar.mcp_server:main"
 
 [tool.setuptools.packages.find]
 include = ["spar*"]

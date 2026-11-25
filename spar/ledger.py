@@ -12,7 +12,6 @@ Stage 1 Core Security Plane:
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import hmac
 import json
@@ -22,7 +21,7 @@ import threading
 import time
 from typing import Any, Iterable
 
-from .policy import safe_mkdir, safe_write_text, scan_for_secrets
+from .policy import _flock_acquire, _flock_release, safe_mkdir, safe_write_text, scan_for_secrets
 
 GENESIS_HASH = "0" * 64
 BLOB_THRESHOLD_BYTES = 256 * 1024
@@ -145,7 +144,7 @@ class Ledger:
         with self._thread_lock:
             lock_fd = os.open(str(self.lock_path), os.O_CREAT | os.O_RDWR, 0o600)
             try:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                _flock_acquire(lock_fd, exclusive=True)
                 try:
                     current_size = self.path.stat().st_size if self.path.exists() else 0
                     if current_size != self._last_size:
@@ -177,14 +176,17 @@ class Ledger:
                         fh.write(line + "\n")
                         fh.flush()
                         os.fsync(fh.fileno())
-                    os.chmod(self.path, 0o600)
+                    try:
+                        os.chmod(self.path, 0o600)
+                    except OSError:
+                        pass
 
                     self._last_size = self.path.stat().st_size
                     self._last_seq = seq
                     self._last_hash = event_hash
                     return event
                 finally:
-                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                    _flock_release(lock_fd)
             finally:
                 os.close(lock_fd)
 
@@ -194,11 +196,11 @@ class Ledger:
         with self._thread_lock:
             lock_fd = os.open(str(self.lock_path), os.O_CREAT | os.O_RDWR, 0o600)
             try:
-                fcntl.flock(lock_fd, fcntl.LOCK_SH)
+                _flock_acquire(lock_fd, exclusive=False)
                 try:
                     raw = self.path.read_text(encoding="utf-8")
                 finally:
-                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                    _flock_release(lock_fd)
             finally:
                 os.close(lock_fd)
         out: list[dict[str, Any]] = []

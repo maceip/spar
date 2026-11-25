@@ -15,17 +15,55 @@ import base64
 import binascii
 import copy
 from dataclasses import dataclass, field
-import fcntl
 import hashlib
 import hmac
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
 import time
 from typing import Any, Iterable, Mapping
 import urllib.parse
 import uuid
+
+if sys.platform == "win32":  # pragma: no cover - Windows locking fallback
+    import msvcrt  # type: ignore[import-not-found]
+    fcntl = None  # type: ignore[assignment]
+else:
+    import fcntl
+    msvcrt = None  # type: ignore[assignment]
+
+
+def _flock_acquire(fd: int, *, exclusive: bool = True, nonblocking: bool = False) -> None:
+    """Cross-platform advisory file lock (fcntl.flock on POSIX, msvcrt.locking on Windows)."""
+    if fcntl is not None:
+        flags = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+        if nonblocking:
+            flags |= fcntl.LOCK_NB
+        fcntl.flock(fd, flags)
+        return
+    # Windows: msvcrt.locking locks byte 0..1 at current offset.
+    os.lseek(fd, 0, os.SEEK_SET)
+    mode = msvcrt.LK_NBLCK if nonblocking else msvcrt.LK_LOCK
+    try:
+        msvcrt.locking(fd, mode, 1)
+    except OSError as exc:
+        if nonblocking:
+            raise BlockingIOError(str(exc)) from exc
+        raise
+
+
+def _flock_release(fd: int) -> None:
+    """Release an advisory file lock acquired via _flock_acquire."""
+    if fcntl is not None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return
+    try:
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    except OSError:
+        pass
 
 try:
     import yaml  # type: ignore[import-untyped]
@@ -855,7 +893,7 @@ class RunLock:
         deadline = time.monotonic() + max(0.0, self.timeout_s)
         while True:
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                _flock_acquire(fd, exclusive=True, nonblocking=True)
                 break
             except BlockingIOError as exc:
                 remaining = deadline - time.monotonic()
@@ -883,7 +921,7 @@ class RunLock:
             return
         self._fd = None
         try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
+            _flock_release(fd)
         finally:
             os.close(fd)
 
