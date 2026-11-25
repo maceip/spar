@@ -27,6 +27,8 @@ from typing import Any, Iterable, Mapping
 import urllib.parse
 import uuid
 
+from .defense import DefenseConfig
+
 if sys.platform == "win32":  # pragma: no cover - Windows locking fallback
     import msvcrt  # type: ignore[import-not-found]
     fcntl = None  # type: ignore[assignment]
@@ -135,6 +137,9 @@ def _default_witnesses_contract() -> dict[str, dict[str, Any]]:
         "refunds": {"method": "GET", "path": "/refunds", "items_field": "refunds"},
         "memory": {"method": "GET", "path": "/memory", "items_field": "passages"},
         "shared_docs": {"method": "POST", "path": "/docs/shared"},
+        # Host-level egress telemetry (kernel-obs shaped). Only read by the covert-egress
+        # techniques, which are planned solely when defense.profile is not "none".
+        "egress": {"method": "GET", "path": "/audit/egress", "events_field": "records"},
     }
 
 
@@ -316,6 +321,13 @@ class TargetContractConfig:
         )
 
 
+def _parse_defense(raw: Any) -> DefenseConfig:
+    try:
+        return DefenseConfig.from_dict(raw)
+    except ValueError as exc:
+        raise ConfigError(f"defense section invalid: {exc}") from exc
+
+
 @dataclass
 class CampaignPolicy:
     run_id: str = field(default_factory=lambda: f"run-{uuid.uuid4().hex[:12]}")
@@ -331,6 +343,7 @@ class CampaignPolicy:
         default_factory=lambda: LLMProviderConfig(api_key_env="SPAR_CRITIC_API_KEY")
     )
     target_contract: TargetContractConfig = field(default_factory=TargetContractConfig)
+    defense: DefenseConfig = field(default_factory=DefenseConfig)
     demo_mode: bool = False
     scope_signature: str = ""
     scope_public_key_env: str = "SPAR_SCOPE_PUBKEY"
@@ -350,6 +363,7 @@ class CampaignPolicy:
             "llm": self.llm.to_dict(),
             "critic_llm": self.critic_llm.to_dict(),
             "target_contract": self.target_contract.to_dict(),
+            "defense": self.defense.to_dict(),
             "demo_mode": bool(self.demo_mode),
             "scope_signature": str(self.scope_signature),
             "scope_public_key_env": str(self.scope_public_key_env),
@@ -400,6 +414,7 @@ class CampaignPolicy:
             scope_signature = str(scope_sec.get("signature", "") or "")
             scope_public_key_env = str(scope_sec.get("public_key_env", "SPAR_SCOPE_PUBKEY") or "SPAR_SCOPE_PUBKEY")
             contract = TargetContractConfig.from_dict(target_sec.get("contract"))
+            defense = _parse_defense(data.get("defense"))
             trials_n = int(trials_sec.get("n", 20))
             min_distinct = int(trials_sec.get("min_distinct_techniques", 3))
             demo_mode = bool(data.get("demo_mode", False))
@@ -418,6 +433,7 @@ class CampaignPolicy:
                 data.get("scope_public_key_env", "SPAR_SCOPE_PUBKEY") or "SPAR_SCOPE_PUBKEY"
             )
             contract = TargetContractConfig.from_dict(data.get("target_contract"))
+            defense = _parse_defense(data.get("defense"))
             trials_n = int(data.get("trials_n", 20))
             min_distinct = int(data.get("min_distinct_techniques", 3))
             demo_mode = bool(data.get("demo_mode", False))
@@ -451,6 +467,7 @@ class CampaignPolicy:
             llm=llm,
             critic_llm=critic_llm,
             target_contract=contract,
+            defense=defense,
             demo_mode=demo_mode,
             scope_signature=scope_signature,
             scope_public_key_env=scope_public_key_env,

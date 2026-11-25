@@ -49,6 +49,10 @@ _HIGH_SEVERITY_TECHNIQUES = frozenset(
         "mcp_abuse",
         "indirect_injection",
         "multi_agent_chain",
+        "dns_label_exfil",
+        "metadata_covert_channel",
+        "volume_shaping",
+        "payload_encoding_mimicry",
     }
 )
 _MED_SEVERITY_TECHNIQUES = frozenset(
@@ -199,7 +203,7 @@ def wilson_interval(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
 
 
 def calibrate_severity(technique: str, success_rate: float, chained: bool) -> str:
-    """Calibrate finding severity across all 11 Spar techniques using success rate and chain impact."""
+    """Calibrate finding severity across every Spar technique using success rate and chain impact."""
     rate = max(0.0, min(1.0, float(success_rate)))
     tech = str(technique or "").strip()
 
