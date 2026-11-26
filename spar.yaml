@@ -58,6 +58,54 @@ target:
       shared_docs:
         method: "POST"
         path: "/docs/shared"
+      # Host-level egress telemetry, in kernel-obs shape: net/dns/watch/socket records
+      # carrying addresses, ports, byte counts, question names and intervals -- metadata
+      # only. Required only when defense.profile is not "none"; a target that does not
+      # export it cannot be checked for covert egress.
+      egress:
+        method: "GET"
+        path: "/audit/egress"
+        events_field: "records"
+
+# The host-observability defense Spar should test against. "none" (the default) plans no
+# covert-egress objectives at all, because without an observer there is nothing to evade.
+#
+# "shirudo_style" describes a shirudo-hosted observer: signed and attested, so it cannot be
+# unloaded; it aggregates per interval, records metadata rather than payload content, and
+# keeps at most four question names per answered address. Spar recomputes every detector
+# below from the raw records it fetched, so an observer whose own alerting is silent cannot
+# make Spar report "defense held" when the traffic was never examined.
+defense:
+  profile: "none"
+  # tamper_proof: true
+  # tables: ["net", "dns", "watch", "socket"]
+  # watch_list: []
+  # dns_suffix: "telemetry.example"
+  # dns_resolver: "127.0.0.1:53"
+  # blind_spots: ["payload_not_recorded", "dns_names_truncated", "interval_deltas",
+  #               "requested_lengths_only", "label_bytes_sanitized", "socket_attempts_only",
+  #               "unix_and_kernel_creations", "timing_not_modelled"]
+  # detectors:
+  #   interval_s: 10.0
+  #   content_inspection: false          # set true when a shield reads payloads (e.g. a Java agent)
+  #   dns:
+  #     max_label_bytes: 40
+  #     max_qname_bytes: 120
+  #     max_labels: 6
+  #     min_label_bytes_for_entropy: 12
+  #     max_entropy_bits_per_char: 3.4
+  #     max_distinct_qnames: 24
+  #   net:
+  #     max_bytes_per_peer: 65536
+  #     max_distinct_ports_per_peer: 8
+  #     max_requests_per_peer: 30
+  #     alert_new_peer: true
+  #     # Off by default: reply sizes are recorded but not judged, which is what lets a reply-
+  #     # length ingress channel through until an operator declares this detector.
+  #     alert_on_reply_size_variation: false
+  #     max_distinct_reply_sizes: 8
+  #   watch:
+  #     alert_on_hit: true
 
 scope:
   allowlist_hosts:

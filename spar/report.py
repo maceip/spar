@@ -49,6 +49,12 @@ _HIGH_SEVERITY_TECHNIQUES = frozenset(
         "mcp_abuse",
         "indirect_injection",
         "multi_agent_chain",
+        "dns_label_exfil",
+        "metadata_covert_channel",
+        "volume_shaping",
+        "payload_encoding_mimicry",
+        "reply_content_carrier",
+        "reply_length_carrier",
     }
 )
 _MED_SEVERITY_TECHNIQUES = frozenset(
@@ -199,7 +205,7 @@ def wilson_interval(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
 
 
 def calibrate_severity(technique: str, success_rate: float, chained: bool) -> str:
-    """Calibrate finding severity across all 11 Spar techniques using success rate and chain impact."""
+    """Calibrate finding severity across every Spar technique using success rate and chain impact."""
     rate = max(0.0, min(1.0, float(success_rate)))
     tech = str(technique or "").strip()
 
@@ -524,6 +530,66 @@ def _ledger_status_tokens(ledger: Ledger | None) -> set[str]:
     return tokens
 
 
+
+_EGRESS_TECHNIQUE_ORDER = (
+    "dns_label_exfil",
+    "metadata_covert_channel",
+    "volume_shaping",
+    "payload_encoding_mimicry",
+    "reply_content_carrier",
+    "reply_length_carrier",
+)
+
+
+def _egress_section(
+    plan: dict[str, Any],
+    objective_outcomes: list[dict[str, Any]],
+    *,
+    secrets: Iterable[str] = (),
+) -> list[str]:
+    """Describe the host-observability defense the campaign tested, or nothing at all.
+
+    Every line here comes from the declared defense profile or from what the covert-egress
+    oracles recorded; a campaign with no declared defense emits no section rather than a
+    section full of zeros.
+    """
+    defense = plan.get("defense") if isinstance(plan, dict) else None
+    if not isinstance(defense, dict) or str(defense.get("profile") or "none") == "none":
+        return []
+    outcomes = {str(o.get("technique") or ""): o for o in objective_outcomes or []}
+    exercised = [t for t in _EGRESS_TECHNIQUE_ORDER if t in outcomes]
+    if not exercised:
+        return []
+    detectors = defense.get("detectors") if isinstance(defense.get("detectors"), dict) else {}
+    blind = [str(b) for b in (defense.get("blind_spots") or [])]
+    lines = [
+        "## Covert Channel Plane",
+        "",
+        f"- **Declared Defense Profile**: `{defense.get('profile')}` (tamper-proof: `{bool(defense.get('tamper_proof'))}`)",
+        f"- **Observed Tables**: {', '.join(f'`{t}`' for t in (defense.get('tables') or [])) or 'none'}",
+        f"- **Interval Aggregation**: `{detectors.get('interval_s')}`s",
+        f"- **Payload Content Inspected**: `{bool(detectors.get('content_inspection'))}`",
+        f"- **Observer Blind Spots Modelled**: {len(blind)} ({', '.join(f'`{b}`' for b in blind) or 'none'})",
+        "- **Why this matters**: a shirudo-style observer cannot be unloaded once the host is "
+        "attested, so traffic has to look ordinary instead of avoiding the sensor.",
+        "",
+        "| Channel Technique | Direction | Outcome | Succeeded (k/n) |",
+        "| --- | --- | --- | --- |",
+    ]
+    for technique in exercised:
+        outcome = outcomes[technique]
+        outcome_raw = str(outcome.get("outcome") or "")
+        outcome_disp = outcome_raw or "not_recorded"
+        k_val = int(outcome.get("k", 0) or 0)
+        n_val = int(outcome.get("n", 0) or 0)
+        direction = "ingress" if technique.startswith("reply_") else "egress"
+        lines.append(
+            f"| `{technique}` | {direction} | `{redact(outcome_disp, secrets=tuple(secrets))}` | `{k_val}/{n_val}` |"
+        )
+    lines.append("")
+    return lines
+
+
 def emit_report(
     findings: list[Any],
     rejected: list[Any],
@@ -604,10 +670,10 @@ def emit_report(
             f"- **Routes**: {len(routes)}",
             f"- **Grounded Claims**: {len(surfaces.get('claims', []))} (dropped ungrounded: {dropped_count})",
             "",
-            "## Objective Outcomes",
-            "",
         ]
     )
+    lines.extend(_egress_section(plan, objective_outcomes, secrets=secret_list))
+    lines.extend(["## Objective Outcomes", ""])
 
     if objective_outcomes:
         lines.append("| Objective ID | Technique | Outcome | Success (k/n) | Trials (completed/planned) |")

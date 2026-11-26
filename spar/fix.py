@@ -111,6 +111,36 @@ _PROMPT_AND_GUARDRAIL_RULES: dict[str, tuple[str, str, str]] = {
         "multilingual_authz: apply tenant ownership and prompt-leak refusals identically across English, Spanish, French, and all locales.",
         "Unify authorization and refusal policies at the semantic/tool layer rather than English-only regex matching.",
     ),
+    "dns_label_exfil": (
+        "+ Inspect egress beyond hostnames: decode DNS question labels and alert on entropy, label length, and names-per-address, or stop putting sensitive values in names at all.",
+        "egress_dns_content: treat DNS question names as a data channel that must be decoded, length-bounded, and rate-limited per destination.",
+        "Add a DNS-aware egress control: decode and inspect question labels instead of trusting the query rate alone.",
+    ),
+    "metadata_covert_channel": (
+        "+ Model connection metadata, not just bytes: alert on distinct destination ports per peer and on request pacing, and prefer one pinned destination for telemetry.",
+        "egress_metadata: baseline peers and ports, alert on port fan-out and on burst pacing, and pin outbound telemetry to a fixed endpoint.",
+        "Treat port fan-out and request timing as observable signal, and pin the outbound destination so a channel has nothing to vary.",
+    ),
+    "volume_shaping": (
+        "+ Alert on cumulative bytes per peer per interval, not per request, and cap total egress per agent turn.",
+        "egress_volume_budget: aggregate bytes per peer per interval, then enforce a per-turn egress budget so chunking cannot hide the total.",
+        "Aggregate egress volume per peer and per interval before alerting; small requests are still data.",
+    ),
+    "payload_encoding_mimicry": (
+        "+ Record or inspect payloads at the egress boundary, because a known peer with an encoded query parameter is invisible to host metadata.",
+        "egress_content: capture request paths and query parameters at the boundary and alert on opaque encoded parameters, not only on new destinations.",
+        "Add boundary payload inspection; host-level metadata cannot see an encoded parameter on a known peer.",
+    ),
+    "reply_content_carrier": (
+        "+ A response body or header is a data channel into the agent: treat inbound content as untrusted input and inspect it at the boundary, not just its byte count.",
+        "ingress_content: validate and bound what the agent reads from every reply, and remember that host metadata records sizes, never meaning.",
+        "Inspect inbound payloads at the egress boundary; a byte count cannot tell you what the agent just read.",
+    ),
+    "reply_length_carrier": (
+        "+ Alert on reply-size fan-out per peer, not only on total bytes, or pin the expected response size for each endpoint.",
+        "ingress_shape: baseline reply sizes per endpoint and alert when a peer varies them, because size alone can carry data.",
+        "Treat response shape as a signal: fixed-size replies for fixed requests leave no room to encode.",
+    ),
     "false_completion": (
         "+ Never claim a deletion, cancellation, or audit-log write succeeded unless the underlying tool actually executed and logged it.",
         "truthful_completion: disallow completion claims when no delete/cancel tool execution occurred and logged to audit.",
