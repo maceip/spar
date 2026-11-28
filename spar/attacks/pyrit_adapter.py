@@ -111,6 +111,7 @@ class SparPyRITTarget(PromptTarget):
         self.risk_tier = risk_tier
         self.last_response: TargetResponse | None = None
         self.history: list[TargetResponse] = []
+        self.sent_prompts: list[str] = []
 
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier(
@@ -166,6 +167,7 @@ class SparPyRITTarget(PromptTarget):
         )
         self.last_response = resp
         self.history.append(resp)
+        self.sent_prompts.append(prompt_text)
         reply_text = self.target_client.extract_chat_reply(resp)
         resp_msg = construct_response_from_request(
             request=primary_piece,
